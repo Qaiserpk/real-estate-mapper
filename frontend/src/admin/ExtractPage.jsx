@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { MapContainer, GeoJSON, useMap } from "react-leaflet";
+import { MapContainer, GeoJSON, Marker, useMap, useMapEvents } from "react-leaflet";
+import L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
 import { api } from "../api.js";
@@ -8,7 +9,13 @@ import RotatedOverlay from "../RotatedOverlay.jsx";
 import BaseLayer from "../BaseLayer.jsx";
 import QuadEditor from "./QuadEditor.jsx";
 import { formatSize } from "../status.js";
-import { pixelToLatLng, subdivideQuad, normalizeQuad } from "../geo.js";
+import {
+  pixelToLatLng,
+  subdivideQuad,
+  normalizeQuad,
+  quadVertexGrid,
+  cellsFromGrid,
+} from "../geo.js";
 
 const ringToGeometry = (cs) => ({ type: "Polygon", coordinates: [[...cs, cs[0]]] });
 
@@ -18,6 +25,145 @@ function quadCorners(geometry) {
   const ring = geometry.coordinates[0];
   const pts = ring.slice(0, ring.length - 1); // drop closing point
   return pts.length === 4 ? pts : null; // [ [lng,lat] x4 ]
+}
+
+// Mesh editor: a draggable handle at every subdivision vertex. Moving a shared
+// (interior) vertex reshapes all adjacent plots together, so blocks can become
+// irregular without gaps.
+const vertexIcon = L.divIcon({
+  className: "mesh-vert",
+  iconSize: [12, 12],
+  iconAnchor: [6, 6],
+});
+function MeshEditor({ verts, onChange, snapTargets }) {
+  const map = useMap();
+  const SNAP_PX = 12;
+
+  // Snap a dragged vertex onto a nearby neighbor-block vertex (within SNAP_PX).
+  const snap = (latlng) => {
+    if (!snapTargets || !snapTargets.length) return latlng;
+    const dp = map.latLngToLayerPoint(latlng);
+    let best = null;
+    let bestD = SNAP_PX;
+    for (const t of snapTargets) {
+      if (Math.abs(t[0] - latlng.lng) > 0.002 || Math.abs(t[1] - latlng.lat) > 0.002) continue;
+      const tp = map.latLngToLayerPoint(L.latLng(t[1], t[0]));
+      const d = Math.hypot(tp.x - dp.x, tp.y - dp.y);
+      if (d < bestD) {
+        bestD = d;
+        best = t;
+      }
+    }
+    return best ? L.latLng(best[1], best[0]) : latlng;
+  };
+
+  const setVert = (r, c, latlng) => {
+    const s = snap(latlng);
+    const next = verts.map((row) => row.slice());
+    next[r][c] = [s.lng, s.lat];
+    onChange(next);
+  };
+  const markers = [];
+  for (let r = 0; r < verts.length; r++) {
+    for (let c = 0; c < verts[r].length; c++) {
+      markers.push(
+        <Marker
+          key={`${r}-${c}`}
+          position={[verts[r][c][1], verts[r][c][0]]}
+          icon={vertexIcon}
+          draggable
+          eventHandlers={{
+            drag: (e) => setVert(r, c, e.target.getLatLng()),
+            dragend: (e) => setVert(r, c, e.target.getLatLng()),
+          }}
+        />
+      );
+    }
+  }
+  return <>{markers}</>;
+}
+
+// Clicking empty map background clears the current selection.
+function DeselectOnClick({ onDeselect }) {
+  useMapEvents({ click: () => onDeselect() });
+  return null;
+}
+
+function polygonCentroid(geometry) {
+  const ring = geometry.coordinates[0];
+  const n = ring.length - 1; // drop closing point
+  let x = 0;
+  let y = 0;
+  for (let i = 0; i < n; i++) {
+    x += ring[i][0];
+    y += ring[i][1];
+  }
+  return [y / n, x / n]; // [lat, lng]
+}
+const labelIcon = (no) =>
+  L.divIcon({ className: "plot-label", html: `<span>${no}</span>`, iconSize: [0, 0] });
+
+// Level-of-detail plot-number labels: only render for plots in the current
+// viewport, and only when few enough are visible (i.e. zoomed in). Re-renders
+// on pan/zoom.
+function PlotLabels({ features, cap = 350 }) {
+  const map = useMap();
+  const [, tick] = useState(0);
+  useMapEvents({ moveend: () => tick((v) => v + 1), zoomend: () => tick((v) => v + 1) });
+
+  const bounds = map.getBounds();
+  const inView = [];
+  for (const f of features) {
+    const p = f.properties;
+    if (p.plot_no == null) continue;
+    const pos = polygonCentroid(f.geometry);
+    if (bounds.contains(pos)) {
+      inView.push({ id: p.id, pos, no: p.plot_no });
+      if (inView.length > cap) return null; // too dense (zoomed out) — skip labels
+    }
+  }
+  return (
+    <>
+      {inView.map((v) => (
+        <Marker key={v.id} position={v.pos} icon={labelIcon(v.no)} interactive={false} />
+      ))}
+    </>
+  );
+}
+
+// Editable single-plot shape: Geoman vertex editing (drag corners, add vertices
+// via midpoint handles). Exposes the live layer through layerRef for saving.
+function ShapeEditor({ geometry, layerRef }) {
+  const map = useMap();
+  useEffect(() => {
+    const layer = L.geoJSON(
+      { type: "Feature", geometry, properties: {} },
+      { style: { color: "#ea580c", weight: 3, fillColor: "#f97316", fillOpacity: 0.25 } }
+    ).getLayers()[0];
+    layer.addTo(map);
+    try {
+      layer.pm.enable({ allowSelfIntersection: false });
+    } catch {
+      /* geoman edit unavailable */
+    }
+    layerRef.current = layer;
+    return () => {
+      try {
+        layer.pm.disable();
+      } catch {
+        /* noop */
+      }
+      try {
+        map.removeLayer(layer);
+        layer.remove();
+      } catch {
+        /* noop */
+      }
+      layerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+  return null;
 }
 
 // On first load, frame the georeferenced drawing rather than the society center.
@@ -48,6 +194,7 @@ const TYPE_COLORS = {
 
 const EMPTY_FORM = {
   block: "",
+  street: "",
   plot_no: "",
   plot_type: "residential",
   sizeW: "",
@@ -112,6 +259,7 @@ export default function ExtractPage() {
     sizeW: "60", // stated plot size (ft), applied to all plots — not calculated
     sizeD: "90",
     block: "",
+    street: "",
     startNo: "1",
     colInc: "1", // number added per column step (across)
     rowInc: "", // per row step (down); blank = auto-continue (cols * colInc)
@@ -122,11 +270,19 @@ export default function ExtractPage() {
   const [selected, setSelected] = useState(null); // clicked plot properties
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState({});
+  const [shapeEdit, setShapeEdit] = useState(null); // { id, geometry } while editing a plot's shape
+  const shapeLayerRef = useRef(null);
+  const [blockEdit, setBlockEdit] = useState(null); // { id, rows, cols } while re-tiling a block
+  const [blockVerts, setBlockVerts] = useState(null); // editable vertex grid
   const [error, setError] = useState(null);
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
   const [autoBusy, setAutoBusy] = useState(false);
   const [undoStack, setUndoStack] = useState([]); // recent creations, for undo
+  const [q, setQ] = useState(""); // plot list search
+  const [fStatus, setFStatus] = useState("all"); // all | draft | live
+  const [fType, setFType] = useState("all");
+  const [showNumbers, setShowNumbers] = useState(true); // plot-number labels on map
   const pendingLayer = useRef(null);
 
   const refreshPlots = () =>
@@ -233,6 +389,31 @@ export default function ExtractPage() {
   // Signature so the preview layer re-renders (labels update) on any numbering change.
   const numSig = `${sub.startNo}-${sub.colInc}-${sub.rowInc}-${sub.revH}-${sub.revV}`;
 
+  // Snap targets while mesh-editing: every vertex of plots NOT in this block.
+  const snapTargets = useMemo(() => {
+    if (!blockEdit || !plots) return [];
+    const pts = [];
+    for (const f of plots.features) {
+      if (f.properties.group_id === blockEdit.id) continue; // skip the block itself
+      const ring = f.geometry.coordinates[0];
+      for (let i = 0; i < ring.length - 1; i++) pts.push(ring[i]); // [lng,lat]
+    }
+    return pts;
+  }, [blockEdit, plots]);
+
+  // Live re-tile preview while editing a block's mesh.
+  const blockPreviewFC = useMemo(() => {
+    if (!blockEdit || !blockVerts) return null;
+    return {
+      type: "FeatureCollection",
+      features: cellsFromGrid(blockVerts).map((c) => ({
+        type: "Feature",
+        geometry: c.geometry,
+        properties: {},
+      })),
+    };
+  }, [blockEdit, blockVerts]);
+
   const setSubF = (k) => (e) => setSub({ ...sub, [k]: e.target.value });
 
   const savePlot = async (e) => {
@@ -244,6 +425,7 @@ export default function ExtractPage() {
       const created = await api.createPlot(mapId, {
         geometry: pending,
         block: form.block || null,
+        street: form.street || null,
         plot_no: form.plot_no || null,
         plot_type: form.plot_type,
         width_ft: Number(form.sizeW) || null,
@@ -273,14 +455,22 @@ export default function ExtractPage() {
       const plots = grid.cells.map((c) => ({
         geometry: c.geometry,
         block: sub.block || null,
+        street: sub.street || null,
         plot_no: String(plotNumber(c.row, c.col, grid.rows, grid.cols)),
         plot_type: sub.plot_type,
         width_ft: w,
         depth_ft: d,
         group_id: groupId,
+        cell_row: c.row,
+        cell_col: c.col,
         min_price: null,
       }));
-      const res = await api.createPlotsBatch(mapId, plots);
+      const res = await api.createPlotsBatch(mapId, plots, {
+        id: groupId,
+        verts: quadVertexGrid(corners, grid.rows, grid.cols),
+        rows: grid.rows,
+        cols: grid.cols,
+      });
       setUndoStack((s) => [
         ...s,
         { kind: "group", groupId, label: `block of ${res.created}` },
@@ -303,6 +493,7 @@ export default function ExtractPage() {
   const startEdit = () => {
     setEdit({
       block: selected.block ?? "",
+      street: selected.street ?? "",
       plot_no: selected.plot_no ?? "",
       plot_type: selected.plot_type,
       sizeW: selected.width_ft ?? "",
@@ -317,6 +508,7 @@ export default function ExtractPage() {
     try {
       const updated = await api.updatePlot(selected.id, {
         block: edit.block || null,
+        street: edit.street || null,
         plot_no: edit.plot_no || null,
         plot_type: edit.plot_type,
         width_ft: Number(edit.sizeW) || null,
@@ -330,6 +522,65 @@ export default function ExtractPage() {
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const startShapeEdit = () => {
+    const feat = plots?.features.find((f) => f.properties.id === selected.id);
+    if (!feat) return;
+    setEditing(false);
+    setShapeEdit({ id: selected.id, geometry: feat.geometry });
+  };
+
+  const saveShape = async () => {
+    const geom = shapeLayerRef.current?.toGeoJSON()?.geometry;
+    if (!geom || !shapeEdit) return;
+    setError(null);
+    try {
+      await api.updatePlot(shapeEdit.id, { geometry: geom }); // metadata/group retained
+      await refreshPlots(); // refresh data first so the layer shows the new shape...
+      setShapeEdit(null); // ...then tear down the editor
+      setMsg("Plot shape updated.");
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const startBlockEdit = async () => {
+    if (!selected?.group_id) return;
+    setError(null);
+    try {
+      const b = await api.getBlock(selected.group_id);
+      if (!b.verts) throw new Error("no verts");
+      setSelected(null);
+      setBlockEdit({ id: b.id, rows: b.rows, cols: b.cols });
+      setBlockVerts(b.verts);
+    } catch {
+      setError("This block predates mesh editing — recreate it to enable re-tiling.");
+    }
+  };
+
+  const saveBlockEdit = async () => {
+    if (!blockEdit || !blockVerts) return;
+    setError(null);
+    try {
+      const cells = cellsFromGrid(blockVerts).map((c) => ({
+        cell_row: c.row,
+        cell_col: c.col,
+        geometry: c.geometry,
+      }));
+      const res = await api.reshapeBlock(blockEdit.id, blockVerts, cells);
+      await refreshPlots();
+      setBlockEdit(null);
+      setBlockVerts(null);
+      setMsg(`Re-tiled block — ${res.updated} plot(s) updated.`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const cancelBlockEdit = () => {
+    setBlockEdit(null);
+    setBlockVerts(null);
   };
 
   const removePlot = async (id) => {
@@ -448,6 +699,19 @@ export default function ExtractPage() {
   const confirmedCount = features.filter((f) => f.properties.confirmed).length;
   const draftCount = features.length - confirmedCount;
 
+  const query = q.trim().toLowerCase();
+  const visibleFeatures = features.filter((f) => {
+    const p = f.properties;
+    if (fStatus === "draft" && p.confirmed) return false;
+    if (fStatus === "live" && !p.confirmed) return false;
+    if (fType !== "all" && p.plot_type !== fType) return false;
+    if (query) {
+      const hay = `${p.block ?? ""} ${p.street ?? ""} ${p.plot_no ?? ""}`.toLowerCase();
+      if (!hay.includes(query)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="admin-page wide">
       <p>
@@ -507,15 +771,21 @@ export default function ExtractPage() {
                       ? ` · auto ${Math.round(p.confidence * 100)}%`
                       : "";
                   layer.bindTooltip(
-                    `Block ${p.block ?? "—"} · Plot ${p.plot_no ?? "—"} · ${formatSize(p)}${auto}`
+                    `${[p.block && `Block ${p.block}`, p.street && `St ${p.street}`, `Plot ${p.plot_no ?? "—"}`]
+                      .filter(Boolean)
+                      .join(" · ")} · ${formatSize(p)}${auto}`
                   );
-                  layer.on("click", () => selectPlot(p));
+                  layer.on("click", (e) => {
+                    L.DomEvent.stopPropagation(e); // don't let it reach the map (deselect)
+                    selectPlot(p);
+                  });
                 }}
               />
             )}
+            {showNumbers && plots && <PlotLabels features={features} />}
             {/* Selection/group highlight as a separate light overlay, so selecting
                 never rebuilds the whole plots layer (which left a ghost on drag). */}
-            {plots && selected && (
+            {plots && selected && !shapeEdit && (
               <GeoJSON
                 key={`hl-${selected.id}`}
                 interactive={false}
@@ -534,7 +804,23 @@ export default function ExtractPage() {
                 })}
               />
             )}
+            {shapeEdit && (
+              <ShapeEditor geometry={shapeEdit.geometry} layerRef={shapeLayerRef} />
+            )}
             {pending && corners && <QuadEditor corners={corners} onChange={setQuad} />}
+            {blockEdit && blockVerts && (
+              <>
+                {blockPreviewFC && (
+                  <GeoJSON
+                    key={`be-${JSON.stringify(blockVerts)}`}
+                    data={blockPreviewFC}
+                    interactive={false}
+                    style={{ color: "#7c3aed", weight: 1, fillColor: "#a855f7", fillOpacity: 0.2 }}
+                  />
+                )}
+                <MeshEditor verts={blockVerts} onChange={setBlockVerts} snapTargets={snapTargets} />
+              </>
+            )}
             {previewFC && (
               <GeoJSON
                 key={`preview-${grid.rows}x${grid.cols}-${numSig}`}
@@ -554,46 +840,114 @@ export default function ExtractPage() {
               />
             )}
             <DrawTools onCreate={onCreate} />
+            {!pending && !shapeEdit && !blockEdit && (
+              <DeselectOnClick onDeselect={() => setSelected(null)} />
+            )}
           </MapContainer>
         </div>
 
         <div className="extract-panel">
-          <label className="opacity block">
-            Drawing opacity
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              value={opacity}
-              onChange={(e) => setOpacity(Number(e.target.value))}
-            />
-          </label>
+          <div className="panel-bar">
+            <span className="pb-title">Extract plots</span>
+            <label className="pb-check" title="Show plot numbers on the map">
+              <input
+                type="checkbox"
+                checked={showNumbers}
+                onChange={(e) => setShowNumbers(e.target.checked)}
+              />
+              #
+            </label>
+            <label className="opacity-mini" title="Drawing opacity">
+              <span>Overlay</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={opacity}
+                onChange={(e) => setOpacity(Number(e.target.value))}
+              />
+            </label>
+          </div>
+          {showNumbers && (
+            <p className="muted small" style={{ margin: "0 2px" }}>
+              Numbers show when zoomed in.
+            </p>
+          )}
 
-          {selected && (
+          {blockEdit && (
+            <div className="card sel-card">
+              <div className="sel-head">
+                <strong>Edit block layout</strong>
+                <button className="x" onClick={cancelBlockEdit} title="Cancel">
+                  ×
+                </button>
+              </div>
+              <p className="muted small">
+                Drag any vertex dot to reshape. Interior vertices move adjacent plots
+                together; edge vertices <strong>snap</strong> onto nearby neighboring-block
+                vertices. {blockEdit.rows * blockEdit.cols} plots keep their numbers.
+              </p>
+              <div className="two">
+                <button onClick={saveBlockEdit}>Save layout</button>
+                <button className="ghost" onClick={cancelBlockEdit}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {selected && !blockEdit && (
             <div className="card sel-card">
               <div className="sel-head">
                 <strong>
-                  Block {selected.block ?? "—"} · Plot {selected.plot_no ?? "—"}
+                  {[
+                    selected.block && `Block ${selected.block}`,
+                    selected.street && `St ${selected.street}`,
+                    `Plot ${selected.plot_no ?? "—"}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </strong>
                 <button className="x" onClick={() => setSelected(null)} title="Deselect">
                   ×
                 </button>
               </div>
 
-              {!editing ? (
+              {shapeEdit ? (
+                <div className="form">
+                  <p className="muted small">
+                    Drag vertices to reshape. Click a midpoint dot to add a vertex.
+                    Number, block, size &amp; group are kept.
+                  </p>
+                  <div className="two">
+                    <button onClick={saveShape}>Save shape</button>
+                    <button className="ghost" onClick={() => setShapeEdit(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : !editing ? (
                 <>
                   <p className="muted small">
                     {selected.plot_type} · <strong>{formatSize(selected)}</strong> ·{" "}
                     {selected.confirmed ? "live" : "draft"}
                   </p>
-                  <div className="two">
+                  <div className="btn-grid">
                     <button className="ghost" onClick={startEdit}>
-                      Edit
+                      Edit info
                     </button>
+                    <button className="ghost" onClick={startShapeEdit}>
+                      Edit shape
+                    </button>
+                    {selected.group_id && (
+                      <button className="ghost" onClick={startBlockEdit}>
+                        Edit block
+                      </button>
+                    )}
                     {!selected.confirmed && (
                       <button className="del-btn" onClick={() => removePlot(selected.id)}>
-                        Delete
+                        Delete plot
                       </button>
                     )}
                   </div>
@@ -602,7 +956,7 @@ export default function ExtractPage() {
                       className="del-block-btn"
                       onClick={() => deleteGroup(selected.group_id)}
                     >
-                      Delete whole block (redo)
+                      Delete whole block
                     </button>
                   )}
                 </>
@@ -617,13 +971,20 @@ export default function ExtractPage() {
                       />
                     </label>
                     <label>
-                      Plot no.
+                      Street
                       <input
-                        value={edit.plot_no}
-                        onChange={(e) => setEdit({ ...edit, plot_no: e.target.value })}
+                        value={edit.street}
+                        onChange={(e) => setEdit({ ...edit, street: e.target.value })}
                       />
                     </label>
                   </div>
+                  <label>
+                    Plot no.
+                    <input
+                      value={edit.plot_no}
+                      onChange={(e) => setEdit({ ...edit, plot_no: e.target.value })}
+                    />
+                  </label>
                   <label>
                     Plot size (ft) — width × depth
                     <div className="dim-row">
@@ -672,27 +1033,23 @@ export default function ExtractPage() {
             </div>
           )}
 
-          <div className="card auto-card">
-            <h2>Auto-detect plots</h2>
-            <p className="muted">
-              Run OpenCV on the drawing to find plot cells as draft suggestions.
-              Re-running replaces previous auto drafts.
-            </p>
-            <button className="auto-btn" onClick={autoDetect} disabled={autoBusy}>
-              {autoBusy ? "Detecting…" : "⚡ Auto-detect plots"}
-            </button>
-          </div>
-
-          {!pending && (
-            <div className="card">
-              <p className="muted">
-                Draw a <strong>rectangle</strong> over a block. Then use the handles:
-                round <span style={{ color: "#7c3aed" }}>◦</span> corners to reshape,
-                square <span style={{ color: "#7c3aed" }}>▪</span> edge handles to grow/shrink
-                width &amp; depth, and the <strong>⟳</strong> icon to rotate it to the block's
-                angle. Or use the <strong>polygon</strong> tool to click 4 corners directly.
-                Everything stays a <strong>draft</strong> until you confirm.
+          {!pending && !selected && !blockEdit && (
+            <div className="card idle-card">
+              <p className="muted small">
+                <strong>Rectangle</strong> tool → a block you subdivide into plots.{" "}
+                <strong>Polygon</strong> tool → a single plot. Reshape with the handles, angle
+                with <strong>⟳</strong>. Drafts stay hidden until you confirm.
               </p>
+              <details className="auto-collapse">
+                <summary>Auto-detect (OpenCV)</summary>
+                <p className="muted small">
+                  Finds plot cells from the drawing as rough draft suggestions; re-running
+                  replaces previous auto drafts.
+                </p>
+                <button className="auto-btn" onClick={autoDetect} disabled={autoBusy}>
+                  {autoBusy ? "Detecting…" : "⚡ Auto-detect plots"}
+                </button>
+              </details>
             </div>
           )}
 
@@ -741,8 +1098,8 @@ export default function ExtractPage() {
                       <input value={sub.block} onChange={setSubF("block")} placeholder="A" />
                     </label>
                     <label>
-                      Start plot #
-                      <input type="number" value={sub.startNo} onChange={setSubF("startNo")} />
+                      Street
+                      <input value={sub.street} onChange={setSubF("street")} placeholder="5" />
                     </label>
                   </div>
                   <label>
@@ -759,6 +1116,10 @@ export default function ExtractPage() {
                   <details className="numbering">
                     <summary>Numbering</summary>
                     <div className="two">
+                      <label>
+                        Start plot #
+                        <input type="number" value={sub.startNo} onChange={setSubF("startNo")} />
+                      </label>
                       <label>
                         Across +/col
                         <input type="number" value={sub.colInc} onChange={setSubF("colInc")} />
@@ -878,13 +1239,41 @@ export default function ExtractPage() {
                 )}
                 {draftCount > 0 && (
                   <button className="reset-btn" onClick={resetAll}>
-                    Delete all drafts
+                    Clear drafts
                   </button>
                 )}
               </div>
             </div>
+
+            <div className="plot-filters">
+              <input
+                className="plot-search"
+                placeholder="Search block / street / no."
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+              <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}>
+                <option value="all">All</option>
+                <option value="draft">Draft</option>
+                <option value="live">Live</option>
+              </select>
+              <select value={fType} onChange={(e) => setFType(e.target.value)}>
+                <option value="all">Any type</option>
+                {Object.keys(TYPE_COLORS).map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {(query || fStatus !== "all" || fType !== "all") && (
+              <p className="muted small filter-count">
+                Showing {visibleFeatures.length} of {features.length}
+              </p>
+            )}
+
             <ul className="list plot-list">
-              {features.map((f) => (
+              {visibleFeatures.map((f) => (
                 <li
                   key={f.properties.id}
                   className={"plot-row" + (selected?.id === f.properties.id ? " sel" : "")}
@@ -895,8 +1284,14 @@ export default function ExtractPage() {
                     style={{ background: TYPE_COLORS[f.properties.plot_type] }}
                   />
                   <span>
-                    B{f.properties.block ?? "—"}/P{f.properties.plot_no ?? "—"} ·{" "}
-                    {formatSize(f.properties)}
+                    {[
+                      f.properties.block && `B${f.properties.block}`,
+                      f.properties.street && `S${f.properties.street}`,
+                      `P${f.properties.plot_no ?? "—"}`,
+                    ]
+                      .filter(Boolean)
+                      .join("/")}{" "}
+                    · {formatSize(f.properties)}
                     {f.properties.source === "auto" && (
                       <span className="pill auto">
                         auto{f.properties.confidence != null ? ` ${Math.round(f.properties.confidence * 100)}%` : ""}
@@ -917,7 +1312,9 @@ export default function ExtractPage() {
                   )}
                 </li>
               ))}
-              {features.length === 0 && <li className="muted">None yet.</li>}
+              {visibleFeatures.length === 0 && (
+                <li className="muted">{features.length === 0 ? "None yet." : "No matches."}</li>
+              )}
             </ul>
           </div>
 
@@ -944,10 +1341,14 @@ function SinglePlotForm({ form, set, saving, onSave, onDiscard, card }) {
           <input value={form.block} onChange={set("block")} placeholder="A" />
         </label>
         <label>
-          Plot no.
-          <input value={form.plot_no} onChange={set("plot_no")} placeholder="12" />
+          Street
+          <input value={form.street} onChange={set("street")} placeholder="5" />
         </label>
       </div>
+      <label>
+        Plot no.
+        <input value={form.plot_no} onChange={set("plot_no")} placeholder="12" />
+      </label>
       <label>
         Type
         <select value={form.plot_type} onChange={set("plot_type")}>

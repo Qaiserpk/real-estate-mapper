@@ -80,6 +80,20 @@ class MapSource(Base):
     society = relationship("Society", back_populates="maps")
 
 
+class Block(Base):
+    """A subdivided block: its full vertex grid, so plots can be re-tiled by
+    moving individual (shared) vertices — not limited to a rigid quad."""
+
+    __tablename__ = "blocks"
+
+    id = Column(String, primary_key=True)  # == plots.group_id
+    society_id = Column(Integer, ForeignKey("societies.id"), index=True)
+    map_source_id = Column(Integer, ForeignKey("map_sources.id"), index=True)
+    verts = Column(JSON)  # (rows+1) x (cols+1) grid of [lng,lat]
+    rows = Column(Integer)
+    cols = Column(Integer)
+
+
 class Plot(Base):
     __tablename__ = "plots"
 
@@ -91,6 +105,7 @@ class Plot(Base):
     confirmed = Column(Boolean, default=False, nullable=False)
 
     block = Column(String, nullable=True)
+    street = Column(String, nullable=True)
     plot_no = Column(String, nullable=True)
     plot_type = Column(Enum(PlotType), default=PlotType.residential)
     status = Column(Enum(PlotStatus), default=PlotStatus.unclaimed)
@@ -101,7 +116,9 @@ class Plot(Base):
     min_price = Column(Float, nullable=True)  # PKR
     source = Column(String, default="manual")  # manual | auto
     confidence = Column(Float, nullable=True)
-    group_id = Column(String, nullable=True, index=True)  # subdivision batch id
+    group_id = Column(String, nullable=True, index=True)  # subdivision block id
+    cell_row = Column(Integer, nullable=True)  # position within its block grid
+    cell_col = Column(Integer, nullable=True)
 
     # WGS84 polygon of the plot boundary.
     geom = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)

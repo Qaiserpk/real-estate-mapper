@@ -81,6 +81,40 @@ export function subdivideQuad(corners, rows, cols) {
   return cells;
 }
 
+// The full (rows+1) x (cols+1) vertex grid of a quad, by bilinear interpolation.
+export function quadVertexGrid(corners, rows, cols) {
+  const [A, B, C, D] = corners;
+  const verts = [];
+  for (let i = 0; i <= rows; i++) {
+    const row = [];
+    for (let j = 0; j <= cols; j++) {
+      row.push(bilinear(A, B, C, D, j / cols, i / rows));
+    }
+    verts.push(row);
+  }
+  return verts;
+}
+
+// Cells (plots) from a vertex grid; each cell is the quad of its 4 grid corners.
+// Returns [{ row, col, geometry }].
+export function cellsFromGrid(verts) {
+  const cells = [];
+  for (let i = 0; i < verts.length - 1; i++) {
+    for (let j = 0; j < verts[i].length - 1; j++) {
+      const p00 = verts[i][j];
+      const p10 = verts[i][j + 1];
+      const p11 = verts[i + 1][j + 1];
+      const p01 = verts[i + 1][j];
+      cells.push({
+        row: i,
+        col: j,
+        geometry: { type: "Polygon", coordinates: [[p00, p10, p11, p01, p00]] },
+      });
+    }
+  }
+  return cells;
+}
+
 function haversineFt(p, q) {
   const R = 6371000;
   const rad = (x) => (x * Math.PI) / 180;

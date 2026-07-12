@@ -152,7 +152,13 @@ function SidePanel({ society, selected, error }) {
   return (
     <div className="panel">
       <h2>
-        Block {selected.block ?? "—"} · Plot {selected.plot_no ?? "—"}
+        {[
+          selected.block && `Block ${selected.block}`,
+          selected.street && `Street ${selected.street}`,
+          `Plot ${selected.plot_no ?? "—"}`,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
       </h2>
       <span className="badge" style={{ background: colorFor(selected.status) }}>
         {STATUS_LABELS[selected.status] ?? selected.status}

@@ -2,11 +2,16 @@
 const BASE = "";
 
 async function req(path, options = {}) {
-  const res = await fetch(BASE + path, options);
+  const res = await fetch(BASE + path, { cache: "no-store", ...options });
   if (!res.ok) {
     let detail = res.statusText;
     try {
-      detail = (await res.json()).detail || detail;
+      const body = await res.json();
+      if (Array.isArray(body.detail)) {
+        detail = body.detail.map((d) => d.msg || JSON.stringify(d)).join("; ");
+      } else {
+        detail = body.detail || detail;
+      }
     } catch {
       /* ignore */
     }
@@ -47,11 +52,18 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  createPlotsBatch: (mapId, plots) =>
+  createPlotsBatch: (mapId, plots, block) =>
     req(`/api/maps/${mapId}/plots/batch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plots }),
+      body: JSON.stringify({ plots, block }),
+    }),
+  getBlock: (blockId) => req(`/api/blocks/${blockId}`),
+  reshapeBlock: (blockId, verts, cells) =>
+    req(`/api/blocks/${blockId}/reshape`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ verts, cells }),
     }),
   updatePlot: (plotId, body) =>
     req(`/api/plots/${plotId}`, {

@@ -68,31 +68,66 @@ class AutoExtractParams(BaseModel):
 class PlotCreate(BaseModel):
     geometry: dict  # GeoJSON Polygon geometry
     block: str | None = None
+    street: str | None = None
     plot_no: str | None = None
     plot_type: PlotType = PlotType.residential
     min_price: float | None = None
     width_ft: float | None = None
     depth_ft: float | None = None
     group_id: str | None = None
+    cell_row: int | None = None
+    cell_col: int | None = None
+
+
+class BlockDef(BaseModel):
+    id: str
+    verts: list  # (rows+1) x (cols+1) grid of [lng,lat]
+    rows: int
+    cols: int
+
+
+class BlockCell(BaseModel):
+    cell_row: int
+    cell_col: int
+    geometry: dict
+
+
+class BlockReshape(BaseModel):
+    verts: list
+    cells: list[BlockCell]
+
+
+class BlockOut(BaseModel):
+    id: str
+    verts: list
+    rows: int
+    cols: int
+
+    class Config:
+        from_attributes = True
 
 
 class PlotUpdate(BaseModel):
     block: str | None = None
+    street: str | None = None
     plot_no: str | None = None
     plot_type: PlotType | None = None
     min_price: float | None = None
     width_ft: float | None = None
     depth_ft: float | None = None
+    geometry: dict | None = None  # GeoJSON Polygon — edit plot shape
 
 
 class PlotBatchCreate(BaseModel):
     plots: list[PlotCreate]
+    block: BlockDef | None = None
 
 
 class PlotProperties(BaseModel):
     id: int
     society_id: int
     block: str | None
+    street: str | None = None
     plot_no: str | None
     plot_type: PlotType
     status: PlotStatus

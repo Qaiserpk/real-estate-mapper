@@ -18,9 +18,11 @@ from .extraction import detect_plots
 
 from .config import settings
 from .database import get_db, init_db
-from .models import MapSource, Plot, PlotStatus, PlotType, Society
+from .models import Block, MapSource, Plot, PlotStatus, PlotType, Society
 from .schemas import (
     AutoExtractParams,
+    BlockOut,
+    BlockReshape,
     GeoreferenceIn,
     MapSourceOut,
     PlotBatchCreate,
@@ -258,6 +260,7 @@ def _build_plot(db: Session, m: MapSource, spec: PlotCreate) -> Plot | None:
         society_id=m.society_id,
         map_source_id=m.id,
         block=spec.block,
+        street=spec.street,
         plot_no=spec.plot_no,
         plot_type=spec.plot_type,
         status=PlotStatus.unclaimed,
@@ -268,6 +271,8 @@ def _build_plot(db: Session, m: MapSource, spec: PlotCreate) -> Plot | None:
         source="manual",
         confirmed=False,
         group_id=spec.group_id,
+        cell_row=spec.cell_row,
+        cell_col=spec.cell_col,
         geom=from_shape(poly, srid=4326),
     )
 
@@ -281,6 +286,20 @@ def create_plots_batch(
     if not m:
         raise HTTPException(status_code=404, detail="Map not found")
 
+    # Persist the block's defining quad so it can be re-tiled later.
+    if payload.block is not None:
+        b = payload.block
+        db.merge(
+            Block(
+                id=b.id,
+                society_id=m.society_id,
+                map_source_id=m.id,
+                verts=b.verts,
+                rows=b.rows,
+                cols=b.cols,
+            )
+        )
+
     created = 0
     for spec in payload.plots:
         plot = _build_plot(db, m, spec)
@@ -289,6 +308,43 @@ def create_plots_batch(
             created += 1
     db.commit()
     return {"created": created}
+
+
+@app.get("/api/blocks/{block_id}", response_model=BlockOut)
+def get_block(block_id: str, db: Session = Depends(get_db)):
+    b = db.get(Block, block_id)
+    if not b:
+        raise HTTPException(status_code=404, detail="Block not found")
+    return b
+
+
+@app.post("/api/blocks/{block_id}/reshape")
+def reshape_block(block_id: str, payload: BlockReshape, db: Session = Depends(get_db)):
+    """Re-tile all plots of a block from a new quad — keeps numbers/metadata."""
+    b = db.get(Block, block_id)
+    if not b:
+        raise HTTPException(status_code=404, detail="Block not found")
+
+    plots = db.query(Plot).filter(Plot.group_id == block_id).all()
+    by_cell = {(p.cell_row, p.cell_col): p for p in plots}
+
+    updated = 0
+    for cell in payload.cells:
+        plot = by_cell.get((cell.cell_row, cell.cell_col))
+        if plot is None or plot.confirmed:
+            continue
+        try:
+            poly = shape(cell.geometry)
+        except Exception:
+            continue
+        if poly.geom_type != "Polygon" or not poly.is_valid or poly.area == 0:
+            continue
+        plot.geom = from_shape(poly, srid=4326)
+        updated += 1
+
+    b.verts = payload.verts
+    db.commit()
+    return {"updated": updated}
 
 
 @app.delete("/api/plots/{plot_id}", status_code=204)
@@ -310,9 +366,21 @@ def update_plot(plot_id: int, payload: PlotUpdate, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="Plot not found")
 
     data = payload.model_dump(exclude_unset=True)
+    geometry = data.pop("geometry", None)
     for field, value in data.items():
         setattr(plot, field, value)
-    # Keep area consistent with the stated dimensions.
+
+    # Optional shape edit — metadata/grouping are left untouched.
+    if geometry is not None:
+        try:
+            poly = shape(geometry)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid geometry")
+        if poly.geom_type != "Polygon" or not poly.is_valid or poly.area == 0:
+            raise HTTPException(status_code=400, detail="Geometry must be a valid Polygon")
+        plot.geom = from_shape(poly, srid=4326)
+
+    # Keep area consistent with the stated dimensions (not the drawn shape).
     if plot.width_ft and plot.depth_ft:
         plot.area_sqft = round(plot.width_ft * plot.depth_ft, 2)
     db.commit()

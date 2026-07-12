@@ -564,7 +564,61 @@ body,
 .extract-panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+}
+.panel-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 2px;
+}
+.pb-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #0f172a;
+}
+.opacity-mini {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #64748b;
+}
+.pb-check {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+  cursor: pointer;
+}
+.opacity-mini input {
+  width: 90px;
+}
+.idle-card .auto-collapse {
+  margin-top: 10px;
+  border-top: 1px solid #f1f5f9;
+  padding-top: 8px;
+}
+.idle-card .auto-collapse summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #7c3aed;
+}
+.accent-card {
+  border-left: 3px solid #2563eb;
+}
+.btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.btn-grid button {
+  padding: 8px;
+  font-size: 13px;
 }
 .opacity.block {
   display: flex;
@@ -576,10 +630,37 @@ body,
   border-radius: 8px;
   padding: 10px 12px;
 }
+.plot-list {
+  max-height: 260px;
+  overflow-y: auto;
+}
 .plot-list li {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.plot-filters {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.plot-search {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.plot-filters select {
+  padding: 6px 4px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fff;
+}
+.filter-count {
+  margin: 2px 0 4px;
 }
 .swatch.sm {
   width: 12px;
@@ -766,6 +847,10 @@ body,
   cursor: pointer;
   width: 100%;
 }
+.block-edit-btn {
+  margin-top: 8px;
+  width: 100%;
+}
 .del-block-btn {
   margin-top: 8px;
   width: 100%;
@@ -826,6 +911,13 @@ body,
   border-radius: 50%;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
+.mesh-vert {
+  background: #7c3aed;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+}
 .qe-edge {
   background: #7c3aed;
   border: 2px solid #fff;
@@ -842,6 +934,18 @@ body,
   font-size: 16px;
   font-weight: 700;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+/* LOD plot-number labels (marker-based, culled to viewport) */
+.plot-label span {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 11px;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  text-shadow: 0 0 2px #fff, 0 0 3px #fff, 0 0 3px #fff;
+  pointer-events: none;
 }
 
 /* Plot-number labels on the subdivision preview */
