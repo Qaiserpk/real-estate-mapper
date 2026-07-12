@@ -26,9 +26,24 @@ class SocietyOut(BaseModel):
     status: str
     sqft_per_marla: float
     marla_per_kanal: int
+    default_counter_limit: int
 
     class Config:
         from_attributes = True
+
+
+class SocietyUpdate(BaseModel):
+    """Superadmin edit of society metadata. Only sent fields are applied."""
+
+    name: str | None = None
+    region: str | None = None
+    center_lat: float | None = None
+    center_lng: float | None = None
+    default_zoom: int | None = None
+    status: str | None = None
+    sqft_per_marla: float | None = None
+    marla_per_kanal: int | None = None
+    default_counter_limit: int | None = None
 
 
 # ---------- Auth & roles ----------

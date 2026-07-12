@@ -52,6 +52,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  updateSociety: (id, patch) =>
+    req(`/api/societies/${id}`, { method: "PATCH", ...jsonBody(patch) }),
   getPlots: (id) => req(`/api/societies/${id}/plots`),
 
   listMaps: (societyId) => req(`/api/societies/${societyId}/maps`),

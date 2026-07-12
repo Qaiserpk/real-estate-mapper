@@ -1286,3 +1286,51 @@ body,
 .admin-signout:hover {
   background: #1e293b;
 }
+
+/* ---------- Society detail: edit ---------- */
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.page-head h1 {
+  margin: 0 0 4px;
+}
+.btn-outline {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #1e293b;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn-outline:hover {
+  background: #f8fafc;
+}
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: capitalize;
+}
+.pill-active {
+  background: #dcfce7;
+  color: #166534;
+}
+.pill-archived {
+  background: #e2e8f0;
+  color: #475569;
+}
+.society-edit {
+  max-width: 560px;
+  margin-bottom: 18px;
+  border: 1px solid #dbeafe;
+}
+.society-edit h2 {
+  margin-top: 0;
+}

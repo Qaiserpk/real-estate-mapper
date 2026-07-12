@@ -42,6 +42,7 @@ from .schemas import (
     PlotUpdate,
     SocietyCreate,
     SocietyOut,
+    SocietyUpdate,
     TokenOut,
     UserCreate,
     UserOut,
@@ -182,6 +183,25 @@ def get_society(society_id: int, db: Session = Depends(get_db)):
     society = db.get(Society, society_id)
     if not society:
         raise HTTPException(status_code=404, detail="Society not found")
+    return society
+
+
+@app.patch("/api/societies/{society_id}", response_model=SocietyOut)
+def update_society(
+    society_id: int,
+    payload: SocietyUpdate,
+    _: User = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+):
+    """Superadmin edits society metadata (only the fields provided)."""
+    society = db.get(Society, society_id)
+    if not society:
+        raise HTTPException(status_code=404, detail="Society not found")
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
+        setattr(society, field, value)
+    db.commit()
+    db.refresh(society)
     return society
 
 
