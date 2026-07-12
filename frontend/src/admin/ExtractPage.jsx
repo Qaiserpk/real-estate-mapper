@@ -120,6 +120,7 @@ export default function ExtractPage() {
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
   const [autoBusy, setAutoBusy] = useState(false);
+  const [undoStack, setUndoStack] = useState([]); // recent creations, for undo
   const pendingLayer = useRef(null);
 
   const refreshPlots = () =>
@@ -244,9 +245,10 @@ export default function ExtractPage() {
         depth_ft: Number(form.sizeD) || null,
         min_price: form.min_price ? Number(form.min_price) : null,
       });
+      setUndoStack((s) => [...s, { kind: "plot", id: created.id, label: "1 plot" }]);
       clearPending();
       await refreshPlots();
-      setMsg(`Saved plot #${created.id} · ${created.area_sqft} sq ft`);
+      setMsg(`Saved plot #${created.id}`);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -274,6 +276,10 @@ export default function ExtractPage() {
         min_price: null,
       }));
       const res = await api.createPlotsBatch(mapId, plots);
+      setUndoStack((s) => [
+        ...s,
+        { kind: "group", groupId, label: `block of ${res.created}` },
+      ]);
       clearPending();
       await refreshPlots();
       setMsg(`Created ${res.created} plots (${grid.rows} × ${grid.cols} grid).`);
@@ -330,6 +336,22 @@ export default function ExtractPage() {
     } catch (e) {
       setError(e.message);
     }
+  };
+
+  const undo = async () => {
+    const action = undoStack[undoStack.length - 1];
+    if (!action) return;
+    setError(null);
+    try {
+      if (action.kind === "group") await api.deletePlotGroup(action.groupId);
+      else await api.deletePlot(action.id);
+    } catch {
+      /* already gone (e.g. deleted/confirmed) — just pop it */
+    }
+    setUndoStack((s) => s.slice(0, -1));
+    setSelected(null);
+    await refreshPlots();
+    setMsg(`Undid ${action.label}.`);
   };
 
   const deleteGroup = async (groupId) => {
@@ -441,7 +463,7 @@ export default function ExtractPage() {
       <div className="extract-split">
         <div className="geo-pane">
           <div className="pane-label">
-            Trace plots over the drawing · use the ▢/⬠ tools (top-left)
+            Trace plots · ▢/⬠ tools (top-left) · angle blocks with the ⟳ handle after drawing
           </div>
           <MapContainer
             center={[society.center_lat, society.center_lng]}
@@ -829,11 +851,18 @@ export default function ExtractPage() {
                   ({draftCount} draft, {confirmedCount} live)
                 </span>
               </h2>
-              {draftCount > 0 && (
-                <button className="reset-btn" onClick={resetAll}>
-                  Delete all drafts
-                </button>
-              )}
+              <div className="head-actions">
+                {undoStack.length > 0 && (
+                  <button className="undo-btn" onClick={undo}>
+                    ↶ Undo
+                  </button>
+                )}
+                {draftCount > 0 && (
+                  <button className="reset-btn" onClick={resetAll}>
+                    Delete all drafts
+                  </button>
+                )}
+              </div>
             </div>
             <ul className="list plot-list">
               {features.map((f) => (
