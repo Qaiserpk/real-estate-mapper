@@ -89,6 +89,68 @@ function DeselectOnClick({ onDeselect }) {
   return null;
 }
 
+// Ctrl + drag moves the reference overlay (Ctrl disables map panning meanwhile).
+function OverlayDrag({ onDelta }) {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    const keydown = (e) => {
+      if (e.key === "Control") {
+        map.dragging.disable();
+        container.style.cursor = "move";
+      }
+    };
+    const keyup = (e) => {
+      if (e.key === "Control" && !dragging) {
+        map.dragging.enable();
+        container.style.cursor = "";
+      }
+    };
+    const down = (e) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      dragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    };
+    const move = (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      if (dx || dy) onDelta(dx, dy);
+    };
+    const up = () => {
+      if (!dragging) return;
+      dragging = false;
+      map.dragging.enable();
+      container.style.cursor = "";
+    };
+
+    container.addEventListener("mousedown", down);
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("keyup", keyup);
+    return () => {
+      container.removeEventListener("mousedown", down);
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      window.removeEventListener("keydown", keydown);
+      window.removeEventListener("keyup", keyup);
+      map.dragging.enable();
+      container.style.cursor = "";
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+  return null;
+}
+
 function polygonCentroid(geometry) {
   const ring = geometry.coordinates[0];
   const n = ring.length - 1; // drop closing point
@@ -260,6 +322,8 @@ export default function ExtractPage() {
     sizeD: "90",
     block: "",
     street: "",
+    streetMode: "same", // 'same' (whole block) | 'row' (per-row streets)
+    streetRows: {}, // { rowIndex: street }
     startNo: "1",
     colInc: "1", // number added per column step (across)
     rowInc: "", // per row step (down); blank = auto-continue (cols * colInc)
@@ -277,13 +341,20 @@ export default function ExtractPage() {
   const [error, setError] = useState(null);
   const [msg, setMsg] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [autoBusy, setAutoBusy] = useState(false);
   const [undoStack, setUndoStack] = useState([]); // recent creations, for undo
   const [q, setQ] = useState(""); // plot list search
   const [fStatus, setFStatus] = useState("all"); // all | draft | live
   const [fType, setFType] = useState("all");
   const [showNumbers, setShowNumbers] = useState(true); // plot-number labels on map
+  const [ovAdj, setOvAdj] = useState({ dx: 0, dy: 0, rot: 0, scale: 1 }); // temp overlay nudge
+  const [baseVariant, setBaseVariant] = useState("streets"); // streets | satellite
   const pendingLayer = useRef(null);
+
+  const nudge = (ddx, ddy) => setOvAdj((a) => ({ ...a, dx: a.dx + ddx, dy: a.dy + ddy }));
+  const rotateOv = (d) => setOvAdj((a) => ({ ...a, rot: +(a.rot + d).toFixed(2) }));
+  const scaleOv = (d) => setOvAdj((a) => ({ ...a, scale: +(a.scale + d).toFixed(3) }));
+  const resetOv = () => setOvAdj({ dx: 0, dy: 0, rot: 0, scale: 1 });
+  const ovAdjusted = ovAdj.dx || ovAdj.dy || ovAdj.rot || ovAdj.scale !== 1;
 
   const refreshPlots = () =>
     api.listMapPlots(mapId).then((fc) => {
@@ -452,10 +523,14 @@ export default function ExtractPage() {
       const d = Number(sub.sizeD) || null;
       const groupId =
         (crypto.randomUUID && crypto.randomUUID()) || `blk-${Math.random().toString(36).slice(2)}`;
+      const streetOf = (row) =>
+        sub.streetMode === "row"
+          ? (sub.streetRows[row] || "").trim() || null
+          : sub.street || null;
       const plots = grid.cells.map((c) => ({
         geometry: c.geometry,
         block: sub.block || null,
-        street: sub.street || null,
+        street: streetOf(c.row),
         plot_no: String(plotNumber(c.row, c.col, grid.rows, grid.cols)),
         plot_type: sub.plot_type,
         width_ft: w,
@@ -639,25 +714,6 @@ export default function ExtractPage() {
     }
   };
 
-  const autoDetect = async () => {
-    setAutoBusy(true);
-    setError(null);
-    setMsg(null);
-    try {
-      const res = await api.autoExtract(mapId);
-      await refreshPlots();
-      setMsg(
-        res.created > 0
-          ? `Auto-detected ${res.created} candidate plot(s) — review, delete bad ones, then confirm.`
-          : "No plots detected. Try tracing manually, or check the drawing quality."
-      );
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setAutoBusy(false);
-    }
-  };
-
   const confirm = async () => {
     setError(null);
     try {
@@ -740,13 +796,14 @@ export default function ExtractPage() {
             style={{ height: "560px" }}
             maxZoom={24}
           >
-            <BaseLayer language="en" />
+            <BaseLayer language="en" variant={baseVariant} />
             <RotatedOverlay
               imageUrl={map.image_url}
               transform={map.transform}
               width={map.width}
               height={map.height}
               opacity={opacity}
+              adjust={ovAdj}
             />
             <FitToContent
               transform={map.transform}
@@ -840,6 +897,7 @@ export default function ExtractPage() {
               />
             )}
             <DrawTools onCreate={onCreate} />
+            <OverlayDrag onDelta={nudge} />
             {!pending && !shapeEdit && !blockEdit && (
               <DeselectOnClick onDeselect={() => setSelected(null)} />
             )}
@@ -849,6 +907,15 @@ export default function ExtractPage() {
         <div className="extract-panel">
           <div className="panel-bar">
             <span className="pb-title">Extract plots</span>
+            <select
+              className="base-select"
+              value={baseVariant}
+              onChange={(e) => setBaseVariant(e.target.value)}
+              title="Base map"
+            >
+              <option value="streets">Streets</option>
+              <option value="satellite">Satellite</option>
+            </select>
             <label className="pb-check" title="Show plot numbers on the map">
               <input
                 type="checkbox"
@@ -874,6 +941,32 @@ export default function ExtractPage() {
               Numbers show when zoomed in.
             </p>
           )}
+
+          <details className="card ov-adjust" open={ovAdjusted}>
+            <summary>
+              Align overlay {ovAdjusted && <span className="pill amber">nudged</span>}
+            </summary>
+            <p className="muted small">
+              Hold <strong>Ctrl</strong> and drag the map to move the reference image into
+              local alignment. Fine-tune with rotate/scale, then reset. This does
+              <strong> not</strong> change the saved georeference.
+            </p>
+            <div className="two ov-fine">
+              <div className="ov-ctl">
+                <span>Rotate</span>
+                <button onClick={() => rotateOv(-0.3)}>−</button>
+                <button onClick={() => rotateOv(0.3)}>+</button>
+              </div>
+              <div className="ov-ctl">
+                <span>Scale</span>
+                <button onClick={() => scaleOv(-0.01)}>−</button>
+                <button onClick={() => scaleOv(0.01)}>+</button>
+              </div>
+            </div>
+            <button onClick={resetOv} className="ghost reset-ov">
+              Reset to fitted
+            </button>
+          </details>
 
           {blockEdit && (
             <div className="card sel-card">
@@ -1040,16 +1133,6 @@ export default function ExtractPage() {
                 <strong>Polygon</strong> tool → a single plot. Reshape with the handles, angle
                 with <strong>⟳</strong>. Drafts stay hidden until you confirm.
               </p>
-              <details className="auto-collapse">
-                <summary>Auto-detect (OpenCV)</summary>
-                <p className="muted small">
-                  Finds plot cells from the drawing as rough draft suggestions; re-running
-                  replaces previous auto drafts.
-                </p>
-                <button className="auto-btn" onClick={autoDetect} disabled={autoBusy}>
-                  {autoBusy ? "Detecting…" : "⚡ Auto-detect plots"}
-                </button>
-              </details>
             </div>
           )}
 
@@ -1092,16 +1175,42 @@ export default function ExtractPage() {
                     </div>
                   </label>
 
-                  <div className="two">
-                    <label>
-                      Block
-                      <input value={sub.block} onChange={setSubF("block")} placeholder="A" />
-                    </label>
-                    <label>
-                      Street
+                  <label>
+                    Block
+                    <input value={sub.block} onChange={setSubF("block")} placeholder="A" />
+                  </label>
+
+                  <div className="street-sec">
+                    <div className="row-between">
+                      <span className="lbl">Street</span>
+                      <select value={sub.streetMode} onChange={setSubF("streetMode")}>
+                        <option value="same">Same for block</option>
+                        <option value="row">Per row</option>
+                      </select>
+                    </div>
+                    {sub.streetMode === "same" ? (
                       <input value={sub.street} onChange={setSubF("street")} placeholder="5" />
-                    </label>
+                    ) : (
+                      <div className="street-rows">
+                        {Array.from({ length: grid.rows }).map((_, i) => (
+                          <label key={i} className="street-row">
+                            <span>Row {i + 1}</span>
+                            <input
+                              value={sub.streetRows[i] || ""}
+                              onChange={(e) =>
+                                setSub({
+                                  ...sub,
+                                  streetRows: { ...sub.streetRows, [i]: e.target.value },
+                                })
+                              }
+                              placeholder="5"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   </div>
+
                   <label>
                     Type
                     <select value={sub.plot_type} onChange={setSubF("plot_type")}>

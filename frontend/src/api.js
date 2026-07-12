@@ -74,6 +74,5 @@ export const api = {
   deletePlot: (plotId) => req(`/api/plots/${plotId}`, { method: "DELETE" }),
   deletePlotGroup: (groupId) => req(`/api/plots/group/${groupId}`, { method: "DELETE" }),
   resetPlots: (mapId) => req(`/api/maps/${mapId}/plots`, { method: "DELETE" }),
-  autoExtract: (mapId) => req(`/api/maps/${mapId}/auto-extract`, { method: "POST" }),
   confirmMap: (mapId) => req(`/api/maps/${mapId}/confirm`, { method: "POST" }),
 };

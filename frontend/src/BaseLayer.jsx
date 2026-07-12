@@ -7,7 +7,10 @@ import "maplibre-gl/dist/maplibre-gl.css";
 const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY;
 export const HAS_VECTOR = Boolean(MAPTILER_KEY);
 
-const STYLE_URL = `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`;
+const styleFor = (variant) =>
+  variant === "satellite"
+    ? `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`
+    : `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`;
 
 // maplibre-gl-leaflet expects globals `L` and `maplibregl`; load it dynamically after setting them.
 let bridgeReady = null;
@@ -38,7 +41,7 @@ function applyLanguage(glMap, language) {
   }
 }
 
-function VectorBaseLayer({ language }) {
+function VectorBaseLayer({ language, styleUrl }) {
   const map = useMap();
   const glRef = useRef(null);
 
@@ -46,7 +49,7 @@ function VectorBaseLayer({ language }) {
     let removed = false;
     ensureBridge().then(() => {
       if (removed) return;
-      const gl = L.maplibreGL({ style: STYLE_URL });
+      const gl = L.maplibreGL({ style: styleUrl });
       gl.addTo(map);
       glRef.current = gl;
       map.attributionControl?.addAttribution(
@@ -77,9 +80,22 @@ function VectorBaseLayer({ language }) {
   return null;
 }
 
-export default function BaseLayer({ language = "en" }) {
-  if (HAS_VECTOR) return <VectorBaseLayer language={language} />;
-  // Fallback: raster OpenStreetMap (native-language labels, over-zoom past 19).
+export default function BaseLayer({ language = "en", variant = "streets" }) {
+  if (HAS_VECTOR) {
+    // Remount on variant change so the GL style rebuilds cleanly.
+    return <VectorBaseLayer key={variant} language={language} styleUrl={styleFor(variant)} />;
+  }
+  // No key -> raster fallbacks.
+  if (variant === "satellite") {
+    return (
+      <TileLayer
+        attribution="Imagery &copy; Esri"
+        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        maxZoom={24}
+        maxNativeZoom={19}
+      />
+    );
+  }
   return (
     <TileLayer
       attribution="&copy; OpenStreetMap contributors"

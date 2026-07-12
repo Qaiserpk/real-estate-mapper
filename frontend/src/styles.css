@@ -594,6 +594,75 @@ body,
   color: #334155;
   cursor: pointer;
 }
+.base-select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+}
+.ov-adjust > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  color: #334155;
+}
+.pill.amber {
+  background: #fef3c7;
+  color: #92400e;
+  margin-left: 6px;
+}
+.nudge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  margin: 8px 0;
+}
+.nudge-mid {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.nudge button {
+  min-width: 34px;
+  height: 30px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.nudge button.ghost {
+  font-size: 11px;
+  color: #64748b;
+}
+.ov-fine {
+  margin-top: 4px;
+}
+.reset-ov {
+  width: 100%;
+  margin-top: 8px;
+}
+.ov-ctl {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #475569;
+}
+.ov-ctl span {
+  flex: 1;
+}
+.ov-ctl button {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 5px;
+  cursor: pointer;
+}
 .opacity-mini input {
   width: 90px;
 }
@@ -744,6 +813,55 @@ body,
 }
 .small {
   font-size: 12px;
+}
+.street-sec .row-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.street-sec .lbl {
+  font-size: 13px;
+  color: #334155;
+}
+.street-sec > input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+}
+.street-sec select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+.street-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.street-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+.street-row span {
+  width: 46px;
+  flex: none;
+}
+.street-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
 }
 .dim-row {
   display: flex;

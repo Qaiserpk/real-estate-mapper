@@ -23,6 +23,7 @@ export default function MapView() {
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState(null);
   const [language, setLanguage] = useState("en");
+  const [baseVariant, setBaseVariant] = useState("streets");
 
   useEffect(() => {
     fetch("/api/societies")
@@ -71,6 +72,15 @@ export default function MapView() {
         <span className="society">
           {society ? `${society.name} — ${society.region ?? ""}` : "Loading…"}
         </span>
+        <select
+          className="lang-select"
+          value={baseVariant}
+          onChange={(e) => setBaseVariant(e.target.value)}
+          title="Base map"
+        >
+          <option value="streets">Streets</option>
+          <option value="satellite">Satellite</option>
+        </select>
         {HAS_VECTOR && (
           <select
             className="lang-select"
@@ -98,7 +108,7 @@ export default function MapView() {
             style={{ height: "100%" }}
             maxZoom={24}
           >
-            <BaseLayer language={language} />
+            <BaseLayer language={language} variant={baseVariant} />
             {plots && (
               <GeoJSON
                 key={society?.id}
