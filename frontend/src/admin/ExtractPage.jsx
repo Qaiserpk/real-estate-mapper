@@ -1,0 +1,912 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { MapContainer, GeoJSON, useMap } from "react-leaflet";
+import "@geoman-io/leaflet-geoman-free";
+import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
+import { api } from "../api.js";
+import RotatedOverlay from "../RotatedOverlay.jsx";
+import BaseLayer from "../BaseLayer.jsx";
+import QuadEditor from "./QuadEditor.jsx";
+import { formatSize } from "../status.js";
+import { pixelToLatLng, subdivideQuad } from "../geo.js";
+
+const ringToGeometry = (cs) => ({ type: "Polygon", coordinates: [[...cs, cs[0]]] });
+
+// A drawn shape is subdividable if its ring is a single quad (4 unique corners).
+function quadCorners(geometry) {
+  if (!geometry || geometry.type !== "Polygon") return null;
+  const ring = geometry.coordinates[0];
+  const pts = ring.slice(0, ring.length - 1); // drop closing point
+  return pts.length === 4 ? pts : null; // [ [lng,lat] x4 ]
+}
+
+// On first load, frame the georeferenced drawing rather than the society center.
+function FitToContent({ transform, width, height }) {
+  const lmap = useMap();
+  const done = useRef(false);
+  useEffect(() => {
+    if (done.current || !transform) return;
+    done.current = true;
+    const corners = [
+      pixelToLatLng(transform, 0, 0),
+      pixelToLatLng(transform, width, 0),
+      pixelToLatLng(transform, 0, height),
+      pixelToLatLng(transform, width, height),
+    ];
+    lmap.fitBounds(corners, { padding: [30, 30] });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
+}
+
+const TYPE_COLORS = {
+  residential: "#3b82f6",
+  commercial: "#f59e0b",
+  agricultural: "#84cc16",
+  amenity: "#14b8a6",
+  other: "#94a3b8",
+};
+
+const EMPTY_FORM = {
+  block: "",
+  plot_no: "",
+  plot_type: "residential",
+  sizeW: "",
+  sizeD: "",
+  min_price: "",
+};
+
+// Adds Geoman polygon/rectangle drawing tools and reports created shapes.
+function DrawTools({ onCreate }) {
+  const map = useMap();
+  useEffect(() => {
+    map.pm.addControls({
+      position: "topleft",
+      drawMarker: false,
+      drawCircleMarker: false,
+      drawPolyline: false,
+      drawCircle: false,
+      drawText: false,
+      drawRectangle: true,
+      drawPolygon: true,
+      editMode: false,
+      dragMode: false,
+      cutPolygon: false,
+      removalMode: false,
+      rotateMode: false,
+    });
+    const handler = (e) => onCreate(e.layer);
+    map.on("pm:create", handler);
+    return () => {
+      map.off("pm:create", handler);
+      try {
+        map.pm.removeControls();
+      } catch {
+        /* map already torn down */
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+  return null;
+}
+
+export default function ExtractPage() {
+  const { mapId } = useParams();
+  const [map, setMap] = useState(null);
+  const [society, setSociety] = useState(null);
+  const [plots, setPlots] = useState(null); // FeatureCollection
+  const [version, setVersion] = useState(0);
+  const [opacity, setOpacity] = useState(0.5);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [pending, setPending] = useState(null); // GeoJSON geometry awaiting save
+  const [corners, setCorners] = useState(null); // [lng,lat] x4 if quad, else null
+  const [mode, setMode] = useState("single"); // 'single' | 'subdivide'
+  const [sub, setSub] = useState({
+    rows: "2",
+    cols: "10",
+    sizeW: "60", // stated plot size (ft), applied to all plots — not calculated
+    sizeD: "90",
+    block: "",
+    startNo: "1",
+    step: "1", // 1 = consecutive, 2 = even/odd
+    order: "row", // 'row' (row-major) | 'col' (column-major)
+    revH: false, // reverse horizontal (right -> left)
+    revV: false, // reverse vertical (bottom -> top)
+    serpentine: false,
+    swap: false, // swap plot orientation vs drawn rectangle
+    plot_type: "residential",
+  });
+  const [selected, setSelected] = useState(null); // clicked plot properties
+  const [editing, setEditing] = useState(false);
+  const [edit, setEdit] = useState({});
+  const [error, setError] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const pendingLayer = useRef(null);
+
+  const refreshPlots = () =>
+    api.listMapPlots(mapId).then((fc) => {
+      setPlots(fc);
+      setVersion((v) => v + 1);
+    });
+
+  useEffect(() => {
+    api
+      .getMap(mapId)
+      .then((m) => {
+        setMap(m);
+        return api.getSociety(m.society_id).then(setSociety);
+      })
+      .then(refreshPlots)
+      .catch((e) => setError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapId]);
+
+  const onCreate = (layer) => {
+    const geom = layer.toGeoJSON().geometry;
+    const quad = quadCorners(geom);
+    setMsg(null);
+    if (quad) {
+      // A 4-corner block: manage it with our own editor (corner/edge/rotate handles).
+      layer.remove();
+      pendingLayer.current = null;
+      setCorners(quad);
+      setPending(geom);
+      setMode("subdivide");
+    } else {
+      // Irregular polygon -> single plot; keep Geoman's layer + vertex editing.
+      pendingLayer.current = layer;
+      setCorners(null);
+      setPending(geom);
+      setMode("single");
+      try {
+        layer.pm.enable({ allowSelfIntersection: false });
+      } catch {
+        /* geoman edit unavailable */
+      }
+      ["pm:edit", "pm:markerdragend", "pm:update"].forEach((ev) =>
+        layer.on(ev, () => setPending(layer.toGeoJSON().geometry))
+      );
+    }
+  };
+
+  const setQuad = (next) => {
+    setCorners(next);
+    setPending(ringToGeometry(next));
+  };
+
+  const clearPending = () => {
+    if (pendingLayer.current) {
+      pendingLayer.current.remove();
+      pendingLayer.current = null;
+    }
+    setPending(null);
+    setCorners(null);
+    setForm(EMPTY_FORM);
+  };
+
+  // Swapping orientation transposes the quad: columns run along the other edge.
+  const cornersUsed = useMemo(() => {
+    if (!corners) return null;
+    const [A, B, C, D] = corners;
+    return sub.swap ? [A, D, C, B] : [A, B, C, D];
+  }, [corners, sub.swap]);
+
+  // Live subdivision grid — always by count (columns x rows).
+  const grid = useMemo(() => {
+    if (!cornersUsed) return null;
+    const rows = Math.max(1, Math.floor(Number(sub.rows) || 1));
+    const cols = Math.max(1, Math.floor(Number(sub.cols) || 1));
+    if (rows * cols > 3000) return { rows, cols, cells: [], tooMany: true };
+    return { rows, cols, cells: subdivideQuad(cornersUsed, rows, cols) };
+  }, [cornersUsed, sub]);
+
+  // Plot number for a cell given direction / order / serpentine / step settings.
+  const plotNumber = (row, col, rows, cols) => {
+    const start = Math.floor(Number(sub.startNo) || 1);
+    const step = Math.max(1, Math.floor(Number(sub.step) || 1));
+    let r = sub.revV ? rows - 1 - row : row;
+    let c = sub.revH ? cols - 1 - col : col;
+    let ordinal;
+    if (sub.order === "col") {
+      if (sub.serpentine && c % 2 === 1) r = rows - 1 - r;
+      ordinal = c * rows + r;
+    } else {
+      if (sub.serpentine && r % 2 === 1) c = cols - 1 - c;
+      ordinal = r * cols + c;
+    }
+    return start + ordinal * step;
+  };
+
+  const previewFC = useMemo(() => {
+    if (mode !== "subdivide" || !grid?.cells?.length) return null;
+    return {
+      type: "FeatureCollection",
+      features: grid.cells.map((c) => ({
+        type: "Feature",
+        geometry: c.geometry,
+        properties: { no: plotNumber(c.row, c.col, grid.rows, grid.cols) },
+      })),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, grid, sub]);
+
+  // Signature so the preview layer re-renders (labels update) on any numbering change.
+  const numSig = `${sub.startNo}-${sub.step}-${sub.order}-${sub.revH}-${sub.revV}-${sub.serpentine}`;
+
+  const setSubF = (k) => (e) => setSub({ ...sub, [k]: e.target.value });
+
+  const savePlot = async (e) => {
+    e.preventDefault();
+    if (!pending) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await api.createPlot(mapId, {
+        geometry: pending,
+        block: form.block || null,
+        plot_no: form.plot_no || null,
+        plot_type: form.plot_type,
+        width_ft: Number(form.sizeW) || null,
+        depth_ft: Number(form.sizeD) || null,
+        min_price: form.min_price ? Number(form.min_price) : null,
+      });
+      clearPending();
+      await refreshPlots();
+      setMsg(`Saved plot #${created.id} · ${created.area_sqft} sq ft`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveGrid = async () => {
+    if (!grid?.cells?.length) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const w = Number(sub.sizeW) || null;
+      const d = Number(sub.sizeD) || null;
+      const plots = grid.cells.map((c) => ({
+        geometry: c.geometry,
+        block: sub.block || null,
+        plot_no: String(plotNumber(c.row, c.col, grid.rows, grid.cols)),
+        plot_type: sub.plot_type,
+        width_ft: w,
+        depth_ft: d,
+        min_price: null,
+      }));
+      const res = await api.createPlotsBatch(mapId, plots);
+      clearPending();
+      await refreshPlots();
+      setMsg(`Created ${res.created} plots (${grid.rows} × ${grid.cols} grid).`);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectPlot = (p) => {
+    setSelected(p);
+    setEditing(false);
+  };
+
+  const startEdit = () => {
+    setEdit({
+      block: selected.block ?? "",
+      plot_no: selected.plot_no ?? "",
+      plot_type: selected.plot_type,
+      sizeW: selected.width_ft ?? "",
+      sizeD: selected.depth_ft ?? "",
+      min_price: selected.min_price ?? "",
+    });
+    setEditing(true);
+  };
+
+  const saveEdit = async () => {
+    setError(null);
+    try {
+      const updated = await api.updatePlot(selected.id, {
+        block: edit.block || null,
+        plot_no: edit.plot_no || null,
+        plot_type: edit.plot_type,
+        width_ft: Number(edit.sizeW) || null,
+        depth_ft: Number(edit.sizeD) || null,
+        min_price: Number(edit.min_price) || null,
+      });
+      setSelected(updated);
+      setEditing(false);
+      await refreshPlots();
+      setMsg(`Updated plot #${updated.id}.`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const removePlot = async (id) => {
+    setError(null);
+    try {
+      await api.deletePlot(id);
+      if (selected?.id === id) setSelected(null);
+      await refreshPlots();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const resetAll = async () => {
+    if (!window.confirm("Delete ALL draft plots on this map? Confirmed plots stay.")) return;
+    setError(null);
+    try {
+      const res = await api.resetPlots(mapId);
+      setSelected(null);
+      await refreshPlots();
+      setMsg(`Deleted ${res.deleted} draft plot(s).`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const autoDetect = async () => {
+    setAutoBusy(true);
+    setError(null);
+    setMsg(null);
+    try {
+      const res = await api.autoExtract(mapId);
+      await refreshPlots();
+      setMsg(
+        res.created > 0
+          ? `Auto-detected ${res.created} candidate plot(s) — review, delete bad ones, then confirm.`
+          : "No plots detected. Try tracing manually, or check the drawing quality."
+      );
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setAutoBusy(false);
+    }
+  };
+
+  const confirm = async () => {
+    setError(null);
+    try {
+      const res = await api.confirmMap(mapId);
+      setMsg(`Confirmed — ${res.confirmed_plots} plot(s) are now public.`);
+      setMap({ ...map, status: "confirmed" });
+      await refreshPlots();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  if (!map || !society) {
+    return (
+      <div className="admin-page">
+        {error ? <p className="error">{error}</p> : <p className="muted">Loading…</p>}
+      </div>
+    );
+  }
+
+  if (!map.transform) {
+    return (
+      <div className="admin-page">
+        <p>
+          <Link to={`/admin/societies/${map.society_id}`}>← {society.name}</Link>
+        </p>
+        <h1>Extract plots</h1>
+        <p className="error">
+          This map isn't georeferenced yet.{" "}
+          <Link to={`/admin/maps/${map.id}/georeference`}>Georeference it first →</Link>
+        </p>
+      </div>
+    );
+  }
+
+  const features = plots?.features || [];
+  const confirmedCount = features.filter((f) => f.properties.confirmed).length;
+  const draftCount = features.length - confirmedCount;
+
+  return (
+    <div className="admin-page wide">
+      <p>
+        <Link to={`/admin/societies/${map.society_id}`}>← {society.name}</Link>
+      </p>
+      <h1>Extract plots — {map.original_name || `map #${map.id}`}</h1>
+
+      <ol className="steps">
+        <li>1 · Upload map</li>
+        <li>2 · Georeference</li>
+        <li className="active">3 · Extract plots</li>
+        <li className={map.status === "confirmed" ? "active" : ""}>4 · Confirm</li>
+      </ol>
+
+      {msg && <p className="ok">{msg}</p>}
+      {error && <p className="error">{error}</p>}
+
+      <div className="extract-split">
+        <div className="geo-pane">
+          <div className="pane-label">
+            Trace plots over the drawing · use the ▢/⬠ tools (top-left)
+          </div>
+          <MapContainer
+            center={[society.center_lat, society.center_lng]}
+            zoom={society.default_zoom}
+            style={{ height: "560px" }}
+            maxZoom={24}
+          >
+            <BaseLayer language="en" />
+            <RotatedOverlay
+              imageUrl={map.image_url}
+              transform={map.transform}
+              width={map.width}
+              height={map.height}
+              opacity={opacity}
+            />
+            <FitToContent
+              transform={map.transform}
+              width={map.width}
+              height={map.height}
+            />
+            {plots && (
+              <GeoJSON
+                key={`${version}-${selected?.id ?? ""}`}
+                data={plots}
+                style={(f) => {
+                  const isSel = selected?.id === f.properties.id;
+                  return {
+                    color: isSel ? "#ea580c" : "#0f172a",
+                    weight: isSel ? 3 : 1,
+                    fillColor: TYPE_COLORS[f.properties.plot_type] || "#94a3b8",
+                    fillOpacity: isSel ? 0.7 : f.properties.confirmed ? 0.55 : 0.35,
+                    dashArray: f.properties.confirmed ? null : "4",
+                  };
+                }}
+                onEachFeature={(f, layer) => {
+                  const p = f.properties;
+                  const auto =
+                    p.source === "auto" && p.confidence != null
+                      ? ` · auto ${Math.round(p.confidence * 100)}%`
+                      : "";
+                  layer.bindTooltip(
+                    `Block ${p.block ?? "—"} · Plot ${p.plot_no ?? "—"} · ${formatSize(p)}${auto}`
+                  );
+                  layer.on("click", () => selectPlot(p));
+                }}
+              />
+            )}
+            {pending && corners && <QuadEditor corners={corners} onChange={setQuad} />}
+            {previewFC && (
+              <GeoJSON
+                key={`preview-${grid.rows}x${grid.cols}-${numSig}`}
+                data={previewFC}
+                interactive={false}
+                style={{ color: "#7c3aed", weight: 1, fillColor: "#a855f7", fillOpacity: 0.25 }}
+                onEachFeature={(f, layer) => {
+                  // Show numbers so the layout can be matched to the numbering menu.
+                  if (grid.cells.length <= 250) {
+                    layer.bindTooltip(String(f.properties.no), {
+                      permanent: true,
+                      direction: "center",
+                      className: "plot-num",
+                    });
+                  }
+                }}
+              />
+            )}
+            <DrawTools onCreate={onCreate} />
+          </MapContainer>
+        </div>
+
+        <div className="extract-panel">
+          <label className="opacity block">
+            Drawing opacity
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={opacity}
+              onChange={(e) => setOpacity(Number(e.target.value))}
+            />
+          </label>
+
+          {selected && (
+            <div className="card sel-card">
+              <div className="sel-head">
+                <strong>
+                  Block {selected.block ?? "—"} · Plot {selected.plot_no ?? "—"}
+                </strong>
+                <button className="x" onClick={() => setSelected(null)} title="Deselect">
+                  ×
+                </button>
+              </div>
+
+              {!editing ? (
+                <>
+                  <p className="muted small">
+                    {selected.plot_type} · <strong>{formatSize(selected)}</strong> ·{" "}
+                    {selected.confirmed ? "live" : "draft"}
+                  </p>
+                  <div className="two">
+                    <button className="ghost" onClick={startEdit}>
+                      Edit
+                    </button>
+                    {!selected.confirmed && (
+                      <button className="del-btn" onClick={() => removePlot(selected.id)}>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="form">
+                  <div className="two">
+                    <label>
+                      Block
+                      <input
+                        value={edit.block}
+                        onChange={(e) => setEdit({ ...edit, block: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      Plot no.
+                      <input
+                        value={edit.plot_no}
+                        onChange={(e) => setEdit({ ...edit, plot_no: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                  <label>
+                    Plot size (ft) — width × depth
+                    <div className="dim-row">
+                      <input
+                        type="number"
+                        value={edit.sizeW}
+                        onChange={(e) => setEdit({ ...edit, sizeW: e.target.value })}
+                      />
+                      <span>×</span>
+                      <input
+                        type="number"
+                        value={edit.sizeD}
+                        onChange={(e) => setEdit({ ...edit, sizeD: e.target.value })}
+                      />
+                    </div>
+                  </label>
+                  <label>
+                    Type
+                    <select
+                      value={edit.plot_type}
+                      onChange={(e) => setEdit({ ...edit, plot_type: e.target.value })}
+                    >
+                      {Object.keys(TYPE_COLORS).map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Min price (PKR)
+                    <input
+                      type="number"
+                      value={edit.min_price}
+                      onChange={(e) => setEdit({ ...edit, min_price: e.target.value })}
+                    />
+                  </label>
+                  <div className="two">
+                    <button onClick={saveEdit}>Save</button>
+                    <button className="ghost" onClick={() => setEditing(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="card auto-card">
+            <h2>Auto-detect plots</h2>
+            <p className="muted">
+              Run OpenCV on the drawing to find plot cells as draft suggestions.
+              Re-running replaces previous auto drafts.
+            </p>
+            <button className="auto-btn" onClick={autoDetect} disabled={autoBusy}>
+              {autoBusy ? "Detecting…" : "⚡ Auto-detect plots"}
+            </button>
+          </div>
+
+          {!pending && (
+            <div className="card">
+              <p className="muted">
+                Draw a <strong>rectangle</strong> over a block. Then use the handles:
+                round <span style={{ color: "#7c3aed" }}>◦</span> corners to reshape,
+                square <span style={{ color: "#7c3aed" }}>▪</span> edge handles to grow/shrink
+                width &amp; depth, and the <strong>⟳</strong> icon to rotate it to the block's
+                angle. Or use the <strong>polygon</strong> tool to click 4 corners directly.
+                Everything stays a <strong>draft</strong> until you confirm.
+              </p>
+            </div>
+          )}
+
+          {pending && corners && (
+            <div className="card">
+              <div className="mode-tabs">
+                <button
+                  className={mode === "subdivide" ? "on" : ""}
+                  onClick={() => setMode("subdivide")}
+                >
+                  Subdivide block
+                </button>
+                <button
+                  className={mode === "single" ? "on" : ""}
+                  onClick={() => setMode("single")}
+                >
+                  Single plot
+                </button>
+              </div>
+
+              {mode === "subdivide" && (
+                <div className="form">
+                  <div className="two">
+                    <label>
+                      Columns
+                      <input type="number" value={sub.cols} onChange={setSubF("cols")} />
+                    </label>
+                    <label>
+                      Rows
+                      <input type="number" value={sub.rows} onChange={setSubF("rows")} />
+                    </label>
+                  </div>
+
+                  <label>
+                    Plot size (ft) — width × depth
+                    <div className="dim-row">
+                      <input type="number" value={sub.sizeW} onChange={setSubF("sizeW")} />
+                      <span>×</span>
+                      <input type="number" value={sub.sizeD} onChange={setSubF("sizeD")} />
+                    </div>
+                  </label>
+
+                  <div className="two">
+                    <label>
+                      Block
+                      <input value={sub.block} onChange={setSubF("block")} placeholder="A" />
+                    </label>
+                    <label>
+                      Start plot #
+                      <input type="number" value={sub.startNo} onChange={setSubF("startNo")} />
+                    </label>
+                  </div>
+                  <label>
+                    Type
+                    <select value={sub.plot_type} onChange={setSubF("plot_type")}>
+                      {Object.keys(TYPE_COLORS).map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <details className="numbering">
+                    <summary>Numbering & orientation</summary>
+                    <label className="chk">
+                      <input
+                        type="checkbox"
+                        checked={sub.swap}
+                        onChange={(e) => setSub({ ...sub, swap: e.target.checked })}
+                      />
+                      Swap plot orientation (rotate grid 90°)
+                    </label>
+                    <div className="two">
+                      <label>
+                        Step
+                        <input type="number" value={sub.step} onChange={setSubF("step")} />
+                      </label>
+                      <label>
+                        Fill order
+                        <select value={sub.order} onChange={setSubF("order")}>
+                          <option value="row">Row-major</option>
+                          <option value="col">Column-major</option>
+                        </select>
+                      </label>
+                    </div>
+                    <p className="hint-line">
+                      Step 1 = consecutive · 2 = even/odd (set Start to 1 or 2).
+                    </p>
+                    <label className="chk">
+                      <input
+                        type="checkbox"
+                        checked={sub.revH}
+                        onChange={(e) => setSub({ ...sub, revH: e.target.checked })}
+                      />
+                      Reverse horizontal (right → left)
+                    </label>
+                    <label className="chk">
+                      <input
+                        type="checkbox"
+                        checked={sub.revV}
+                        onChange={(e) => setSub({ ...sub, revV: e.target.checked })}
+                      />
+                      Reverse vertical (bottom → top)
+                    </label>
+                    <label className="chk">
+                      <input
+                        type="checkbox"
+                        checked={sub.serpentine}
+                        onChange={(e) => setSub({ ...sub, serpentine: e.target.checked })}
+                      />
+                      Serpentine (snake back-and-forth)
+                    </label>
+                  </details>
+
+                  {grid?.tooMany ? (
+                    <p className="error">
+                      {grid.rows} × {grid.cols} is too many ({grid.rows * grid.cols}). Reduce.
+                    </p>
+                  ) : (
+                    <p className="grid-count">
+                      {grid.cols} × {grid.rows} = <strong>{grid.rows * grid.cols} plots</strong>
+                      <br />
+                      <span className="muted small">
+                        #{Math.floor(Number(sub.startNo) || 1)} →{" "}
+                        {Math.floor(Number(sub.startNo) || 1) +
+                          (grid.rows * grid.cols - 1) * Math.max(1, Math.floor(Number(sub.step) || 1))}
+                      </span>
+                    </p>
+                  )}
+
+                  <div className="two">
+                    <button onClick={saveGrid} disabled={saving || !grid?.cells?.length}>
+                      {saving ? "Creating…" : `Create ${grid?.cells?.length || 0} plots`}
+                    </button>
+                    <button type="button" className="ghost" onClick={clearPending}>
+                      Discard
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {mode === "single" && (
+                <SinglePlotForm
+                  form={form}
+                  set={set}
+                  saving={saving}
+                  onSave={savePlot}
+                  onDiscard={clearPending}
+                />
+              )}
+            </div>
+          )}
+
+          {pending && !corners && (
+            <SinglePlotForm
+              card
+              form={form}
+              set={set}
+              saving={saving}
+              onSave={savePlot}
+              onDiscard={clearPending}
+            />
+          )}
+
+          <div className="card">
+            <div className="list-head">
+              <h2>
+                Plots · {features.length}{" "}
+                <span className="muted">
+                  ({draftCount} draft, {confirmedCount} live)
+                </span>
+              </h2>
+              {draftCount > 0 && (
+                <button className="reset-btn" onClick={resetAll}>
+                  Delete all drafts
+                </button>
+              )}
+            </div>
+            <ul className="list plot-list">
+              {features.map((f) => (
+                <li
+                  key={f.properties.id}
+                  className={"plot-row" + (selected?.id === f.properties.id ? " sel" : "")}
+                  onClick={() => selectPlot(f.properties)}
+                >
+                  <span
+                    className="swatch sm"
+                    style={{ background: TYPE_COLORS[f.properties.plot_type] }}
+                  />
+                  <span>
+                    B{f.properties.block ?? "—"}/P{f.properties.plot_no ?? "—"} ·{" "}
+                    {formatSize(f.properties)}
+                    {f.properties.source === "auto" && (
+                      <span className="pill auto">
+                        auto{f.properties.confidence != null ? ` ${Math.round(f.properties.confidence * 100)}%` : ""}
+                      </span>
+                    )}
+                    {f.properties.confirmed && <span className="pill">live</span>}
+                  </span>
+                  {!f.properties.confirmed && (
+                    <button
+                      className="link-danger"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removePlot(f.properties.id);
+                      }}
+                    >
+                      delete
+                    </button>
+                  )}
+                </li>
+              ))}
+              {features.length === 0 && <li className="muted">None yet.</li>}
+            </ul>
+          </div>
+
+          <button
+            className="confirm-btn"
+            onClick={confirm}
+            disabled={draftCount === 0}
+            title={draftCount === 0 ? "Nothing new to confirm" : ""}
+          >
+            Confirm map → publish {draftCount} plot(s)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SinglePlotForm({ form, set, saving, onSave, onDiscard, card }) {
+  return (
+    <form className={"form" + (card ? " card" : "")} onSubmit={onSave}>
+      <div className="two">
+        <label>
+          Block
+          <input value={form.block} onChange={set("block")} placeholder="A" />
+        </label>
+        <label>
+          Plot no.
+          <input value={form.plot_no} onChange={set("plot_no")} placeholder="12" />
+        </label>
+      </div>
+      <label>
+        Type
+        <select value={form.plot_type} onChange={set("plot_type")}>
+          {Object.keys(TYPE_COLORS).map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        Plot size (ft) — width × depth
+        <div className="dim-row">
+          <input type="number" value={form.sizeW} onChange={set("sizeW")} placeholder="60" />
+          <span>×</span>
+          <input type="number" value={form.sizeD} onChange={set("sizeD")} placeholder="90" />
+        </div>
+      </label>
+      <label>
+        Min price (PKR, optional)
+        <input
+          type="number"
+          value={form.min_price}
+          onChange={set("min_price")}
+          placeholder="8500000"
+        />
+      </label>
+      <div className="two">
+        <button type="submit" disabled={saving}>
+          {saving ? "Saving…" : "Save plot"}
+        </button>
+        <button type="button" className="ghost" onClick={onDiscard}>
+          Discard
+        </button>
+      </div>
+    </form>
+  );
+}
