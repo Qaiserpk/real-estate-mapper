@@ -71,6 +71,18 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  bulkUpdatePlots: (ids, patch) =>
+    req(`/api/plots/bulk`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, ...patch }),
+    }),
+  bulkDeletePlots: (ids) =>
+    req(`/api/plots/bulk-delete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    }),
   deletePlot: (plotId) => req(`/api/plots/${plotId}`, { method: "DELETE" }),
   deletePlotGroup: (groupId) => req(`/api/plots/group/${groupId}`, { method: "DELETE" }),
   resetPlots: (mapId) => req(`/api/maps/${mapId}/plots`, { method: "DELETE" }),

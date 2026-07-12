@@ -1018,6 +1018,31 @@ body,
   outline: 2px solid #fdba74;
   border-radius: 4px;
 }
+.plot-row.multisel {
+  background: #ecfeff;
+}
+.row-check {
+  flex: none;
+  cursor: pointer;
+}
+.list-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0;
+}
+.mini-btn {
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 5px;
+  cursor: pointer;
+  color: #334155;
+}
+.bulk-card {
+  border-left-color: #0891b2;
+}
 
 /* Quad editor handles */
 .qe-handle {

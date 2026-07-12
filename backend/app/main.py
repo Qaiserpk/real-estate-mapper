@@ -23,6 +23,8 @@ from .schemas import (
     AutoExtractParams,
     BlockOut,
     BlockReshape,
+    BulkIds,
+    BulkPlotUpdate,
     GeoreferenceIn,
     MapSourceOut,
     PlotBatchCreate,
@@ -345,6 +347,37 @@ def reshape_block(block_id: str, payload: BlockReshape, db: Session = Depends(ge
     b.verts = payload.verts
     db.commit()
     return {"updated": updated}
+
+
+@app.patch("/api/plots/bulk")
+def bulk_update_plots(payload: BulkPlotUpdate, db: Session = Depends(get_db)):
+    """Apply the same field values to many plots at once (only sent fields)."""
+    data = payload.model_dump(exclude_unset=True)
+    ids = data.pop("ids", [])
+    if not ids:
+        return {"updated": 0}
+    plots = db.query(Plot).filter(Plot.id.in_(ids)).all()
+    for p in plots:
+        for field, value in data.items():
+            setattr(p, field, value)
+        if p.width_ft and p.depth_ft:
+            p.area_sqft = round(p.width_ft * p.depth_ft, 2)
+    db.commit()
+    return {"updated": len(plots)}
+
+
+@app.post("/api/plots/bulk-delete")
+def bulk_delete_plots(payload: BulkIds, db: Session = Depends(get_db)):
+    """Delete many draft plots at once (confirmed ones are skipped)."""
+    if not payload.ids:
+        return {"deleted": 0}
+    n = (
+        db.query(Plot)
+        .filter(Plot.id.in_(payload.ids), Plot.confirmed.is_(False))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": n}
 
 
 @app.delete("/api/plots/{plot_id}", status_code=204)

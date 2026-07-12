@@ -118,6 +118,20 @@ class PlotUpdate(BaseModel):
     geometry: dict | None = None  # GeoJSON Polygon — edit plot shape
 
 
+class BulkPlotUpdate(BaseModel):
+    ids: list[int]
+    block: str | None = None
+    street: str | None = None
+    plot_type: PlotType | None = None
+    min_price: float | None = None
+    width_ft: float | None = None
+    depth_ft: float | None = None
+
+
+class BulkIds(BaseModel):
+    ids: list[int]
+
+
 class PlotBatchCreate(BaseModel):
     plots: list[PlotCreate]
     block: BlockDef | None = None

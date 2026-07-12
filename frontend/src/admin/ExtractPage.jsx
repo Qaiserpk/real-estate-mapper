@@ -334,6 +334,9 @@ export default function ExtractPage() {
   const [selected, setSelected] = useState(null); // clicked plot properties
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState({});
+  const [multiSel, setMultiSel] = useState(() => new Set()); // multi-selected plot ids
+  const BULK_EMPTY = { block: "", street: "", sizeW: "", sizeD: "", plot_type: "", min_price: "" };
+  const [bulk, setBulk] = useState(BULK_EMPTY);
   const [shapeEdit, setShapeEdit] = useState(null); // { id, geometry } while editing a plot's shape
   const shapeLayerRef = useRef(null);
   const [blockEdit, setBlockEdit] = useState(null); // { id, rows, cols } while re-tiling a block
@@ -560,9 +563,65 @@ export default function ExtractPage() {
     }
   };
 
-  const selectPlot = (p) => {
+  const selectPlot = (p, additive) => {
+    if (additive) {
+      setSelected(null);
+      setMultiSel((s) => {
+        const n = new Set(s);
+        n.has(p.id) ? n.delete(p.id) : n.add(p.id);
+        return n;
+      });
+      return;
+    }
     setSelected(p);
+    setMultiSel(new Set());
     setEditing(false);
+  };
+
+  const selectAllShown = (feats) => setMultiSel(new Set(feats.map((f) => f.properties.id)));
+  const clearMulti = () => setMultiSel(new Set());
+  const toggleMulti = (id) =>
+    setMultiSel((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  const setBulkF = (k) => (e) => setBulk({ ...bulk, [k]: e.target.value });
+
+  const applyBulk = async () => {
+    const patch = {};
+    if (bulk.block.trim()) patch.block = bulk.block.trim();
+    if (bulk.street.trim()) patch.street = bulk.street.trim();
+    if (bulk.plot_type) patch.plot_type = bulk.plot_type;
+    if (bulk.min_price !== "") patch.min_price = Number(bulk.min_price);
+    if (bulk.sizeW !== "") patch.width_ft = Number(bulk.sizeW);
+    if (bulk.sizeD !== "") patch.depth_ft = Number(bulk.sizeD);
+    if (Object.keys(patch).length === 0) {
+      setError("Fill at least one field to apply.");
+      return;
+    }
+    setError(null);
+    try {
+      const res = await api.bulkUpdatePlots([...multiSel], patch);
+      setBulk(BULK_EMPTY);
+      await refreshPlots();
+      setMsg(`Updated ${res.updated} plot(s).`);
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const deleteBulk = async () => {
+    if (!window.confirm(`Delete ${multiSel.size} selected plot(s)? (drafts only)`)) return;
+    setError(null);
+    try {
+      const res = await api.bulkDeletePlots([...multiSel]);
+      clearMulti();
+      await refreshPlots();
+      setMsg(`Deleted ${res.deleted} plot(s).`);
+    } catch (e) {
+      setError(e.message);
+    }
   };
 
   const startEdit = () => {
@@ -834,9 +893,20 @@ export default function ExtractPage() {
                   );
                   layer.on("click", (e) => {
                     L.DomEvent.stopPropagation(e); // don't let it reach the map (deselect)
-                    selectPlot(p);
+                    selectPlot(p, e.originalEvent.shiftKey);
                   });
                 }}
+              />
+            )}
+            {plots && multiSel.size > 0 && (
+              <GeoJSON
+                key={`ms-${[...multiSel].sort((a, b) => a - b).join(",")}`}
+                interactive={false}
+                data={{
+                  type: "FeatureCollection",
+                  features: plots.features.filter((f) => multiSel.has(f.properties.id)),
+                }}
+                style={{ color: "#0891b2", weight: 3, fillColor: "#06b6d4", fillOpacity: 0.45 }}
               />
             )}
             {showNumbers && plots && <PlotLabels features={features} />}
@@ -899,7 +969,12 @@ export default function ExtractPage() {
             <DrawTools onCreate={onCreate} />
             <OverlayDrag onDelta={nudge} />
             {!pending && !shapeEdit && !blockEdit && (
-              <DeselectOnClick onDeselect={() => setSelected(null)} />
+              <DeselectOnClick
+                onDeselect={() => {
+                  setSelected(null);
+                  clearMulti();
+                }}
+              />
             )}
           </MapContainer>
         </div>
@@ -967,6 +1042,67 @@ export default function ExtractPage() {
               Reset to fitted
             </button>
           </details>
+
+          {multiSel.size > 0 && (
+            <div className="card sel-card bulk-card">
+              <div className="sel-head">
+                <strong>{multiSel.size} plots selected</strong>
+                <button className="x" onClick={clearMulti} title="Clear selection">
+                  ×
+                </button>
+              </div>
+              <p className="muted small">
+                Shift-click plots (or tick rows) to select. Filled fields apply to all;
+                blanks are left unchanged.
+              </p>
+              <div className="form">
+                <div className="two">
+                  <label>
+                    Block
+                    <input value={bulk.block} onChange={setBulkF("block")} placeholder="unchanged" />
+                  </label>
+                  <label>
+                    Street
+                    <input value={bulk.street} onChange={setBulkF("street")} placeholder="unchanged" />
+                  </label>
+                </div>
+                <label>
+                  Plot size (ft) — width × depth
+                  <div className="dim-row">
+                    <input type="number" value={bulk.sizeW} onChange={setBulkF("sizeW")} placeholder="w" />
+                    <span>×</span>
+                    <input type="number" value={bulk.sizeD} onChange={setBulkF("sizeD")} placeholder="d" />
+                  </div>
+                </label>
+                <div className="two">
+                  <label>
+                    Type
+                    <select value={bulk.plot_type} onChange={setBulkF("plot_type")}>
+                      <option value="">unchanged</option>
+                      {Object.keys(TYPE_COLORS).map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Min price
+                    <input
+                      type="number"
+                      value={bulk.min_price}
+                      onChange={setBulkF("min_price")}
+                      placeholder="unchanged"
+                    />
+                  </label>
+                </div>
+                <button onClick={applyBulk}>Apply to {multiSel.size}</button>
+                <button className="del-btn" onClick={deleteBulk}>
+                  Delete {multiSel.size} selected
+                </button>
+              </div>
+            </div>
+          )}
 
           {blockEdit && (
             <div className="card sel-card">
@@ -1375,19 +1511,37 @@ export default function ExtractPage() {
                 ))}
               </select>
             </div>
-            {(query || fStatus !== "all" || fType !== "all") && (
-              <p className="muted small filter-count">
-                Showing {visibleFeatures.length} of {features.length}
-              </p>
-            )}
+            <div className="list-subhead">
+              <span className="muted small">
+                {query || fStatus !== "all" || fType !== "all"
+                  ? `Showing ${visibleFeatures.length} of ${features.length}`
+                  : `${features.length} total`}
+              </span>
+              {visibleFeatures.length > 0 && (
+                <button className="mini-btn" onClick={() => selectAllShown(visibleFeatures)}>
+                  Select shown
+                </button>
+              )}
+            </div>
 
             <ul className="list plot-list">
               {visibleFeatures.map((f) => (
                 <li
                   key={f.properties.id}
-                  className={"plot-row" + (selected?.id === f.properties.id ? " sel" : "")}
-                  onClick={() => selectPlot(f.properties)}
+                  className={
+                    "plot-row" +
+                    (selected?.id === f.properties.id ? " sel" : "") +
+                    (multiSel.has(f.properties.id) ? " multisel" : "")
+                  }
+                  onClick={(e) => selectPlot(f.properties, e.shiftKey)}
                 >
+                  <input
+                    type="checkbox"
+                    className="row-check"
+                    checked={multiSel.has(f.properties.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleMulti(f.properties.id)}
+                  />
                   <span
                     className="swatch sm"
                     style={{ background: TYPE_COLORS[f.properties.plot_type] }}
