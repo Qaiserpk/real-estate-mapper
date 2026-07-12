@@ -16,9 +16,14 @@ from sqlalchemy.orm import Session
 
 from .extraction import detect_plots
 
+from .auth import (
+    get_current_user,
+    require_admin,
+    require_superadmin,
+)
 from .config import settings
 from .database import get_db, init_db
-from .models import Block, MapSource, Plot, PlotStatus, PlotType, Society
+from .models import Block, MapSource, Membership, Plot, PlotStatus, PlotType, Role, Society, User
 from .schemas import (
     AutoExtractParams,
     BlockOut,
@@ -26,14 +31,22 @@ from .schemas import (
     BulkIds,
     BulkPlotUpdate,
     GeoreferenceIn,
+    LoginIn,
     MapSourceOut,
+    MembershipCreate,
+    MembershipOut,
+    MeOut,
     PlotBatchCreate,
     PlotCreate,
     PlotProperties,
     PlotUpdate,
     SocietyCreate,
     SocietyOut,
+    TokenOut,
+    UserCreate,
+    UserOut,
 )
+from .security import create_access_token, hash_password, verify_password
 
 SQM_TO_SQFT = 10.7639
 
@@ -67,13 +80,96 @@ def health():
     return {"status": "ok"}
 
 
+# ---------- Auth & roles ----------
+
+
+def _me(user: User) -> MeOut:
+    out = MeOut.model_validate(user, from_attributes=True)
+    out.memberships = [
+        MembershipOut.model_validate(m, from_attributes=True) for m in user.memberships
+    ]
+    return out
+
+
+@app.post("/api/auth/register", response_model=TokenOut, status_code=201)
+def register(payload: UserCreate, db: Session = Depends(get_db)):
+    email = payload.email.lower()
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    user = User(
+        email=email,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name,
+        phone=payload.phone,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return TokenOut(access_token=create_access_token(user.id), user=_me(user))
+
+
+@app.post("/api/auth/login", response_model=TokenOut)
+def login(payload: LoginIn, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == payload.email.lower()).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if user.disabled:
+        raise HTTPException(status_code=403, detail="Account disabled")
+    return TokenOut(access_token=create_access_token(user.id), user=_me(user))
+
+
+@app.get("/api/auth/me", response_model=MeOut)
+def me(user: User = Depends(get_current_user)):
+    return _me(user)
+
+
+@app.get("/api/users", response_model=list[UserOut])
+def list_users(
+    _: User = Depends(require_superadmin), db: Session = Depends(get_db)
+):
+    return db.query(User).order_by(User.id).all()
+
+
+@app.post("/api/memberships", response_model=MembershipOut, status_code=201)
+def grant_membership(
+    payload: MembershipCreate,
+    _: User = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+):
+    """Superadmin assigns (or updates) a user's role within a society."""
+    if not db.get(User, payload.user_id):
+        raise HTTPException(status_code=404, detail="User not found")
+    if not db.get(Society, payload.society_id):
+        raise HTTPException(status_code=404, detail="Society not found")
+    m = (
+        db.query(Membership)
+        .filter(
+            Membership.user_id == payload.user_id,
+            Membership.society_id == payload.society_id,
+        )
+        .first()
+    )
+    if m is None:
+        m = Membership(**payload.model_dump())
+        db.add(m)
+    else:
+        m.role = payload.role
+    db.commit()
+    db.refresh(m)
+    return m
+
+
 @app.get("/api/societies", response_model=list[SocietyOut])
 def list_societies(db: Session = Depends(get_db)):
     return db.query(Society).order_by(Society.id).all()
 
 
 @app.post("/api/societies", response_model=SocietyOut, status_code=201)
-def create_society(payload: SocietyCreate, db: Session = Depends(get_db)):
+def create_society(
+    payload: SocietyCreate,
+    _: User = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+):
     society = Society(**payload.model_dump())
     db.add(society)
     db.commit()
@@ -122,7 +218,11 @@ ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg"}
 
 
 @app.get("/api/societies/{society_id}/maps", response_model=list[MapSourceOut])
-def list_maps(society_id: int, db: Session = Depends(get_db)):
+def list_maps(
+    society_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     if not db.get(Society, society_id):
         raise HTTPException(status_code=404, detail="Society not found")
     maps = (
@@ -138,6 +238,7 @@ def list_maps(society_id: int, db: Session = Depends(get_db)):
 def upload_map(
     society_id: int,
     file: UploadFile = File(...),
+    _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     if not db.get(Society, society_id):
@@ -173,7 +274,11 @@ def upload_map(
 
 
 @app.get("/api/maps/{map_id}", response_model=MapSourceOut)
-def get_map(map_id: int, db: Session = Depends(get_db)):
+def get_map(
+    map_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     m = db.get(MapSource, map_id)
     if not m:
         raise HTTPException(status_code=404, detail="Map not found")
@@ -197,7 +302,12 @@ def solve_affine(points: list) -> dict:
 
 
 @app.put("/api/maps/{map_id}/georeference", response_model=MapSourceOut)
-def georeference(map_id: int, payload: GeoreferenceIn, db: Session = Depends(get_db)):
+def georeference(
+    map_id: int,
+    payload: GeoreferenceIn,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     m = db.get(MapSource, map_id)
     if not m:
         raise HTTPException(status_code=404, detail="Map not found")
@@ -215,7 +325,11 @@ def georeference(map_id: int, payload: GeoreferenceIn, db: Session = Depends(get
 
 
 @app.get("/api/maps/{map_id}/plots")
-def list_map_plots(map_id: int, db: Session = Depends(get_db)):
+def list_map_plots(
+    map_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Admin: all plots traced on a map (draft + confirmed), as GeoJSON."""
     if not db.get(MapSource, map_id):
         raise HTTPException(status_code=404, detail="Map not found")
@@ -229,7 +343,12 @@ def list_map_plots(map_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/maps/{map_id}/plots", status_code=201)
-def create_plot(map_id: int, payload: PlotCreate, db: Session = Depends(get_db)):
+def create_plot(
+    map_id: int,
+    payload: PlotCreate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     m = db.get(MapSource, map_id)
     if not m:
         raise HTTPException(status_code=404, detail="Map not found")
@@ -269,7 +388,6 @@ def _build_plot(db: Session, m: MapSource, spec: PlotCreate) -> Plot | None:
         width_ft=spec.width_ft,
         depth_ft=spec.depth_ft,
         area_sqft=_stated_area(spec),  # from stated size, not the drawing
-        min_price=spec.min_price,
         source="manual",
         confirmed=False,
         group_id=spec.group_id,
@@ -281,7 +399,10 @@ def _build_plot(db: Session, m: MapSource, spec: PlotCreate) -> Plot | None:
 
 @app.post("/api/maps/{map_id}/plots/batch", status_code=201)
 def create_plots_batch(
-    map_id: int, payload: PlotBatchCreate, db: Session = Depends(get_db)
+    map_id: int,
+    payload: PlotBatchCreate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
     """Create many draft plots at once (used by the block-subdivision tool)."""
     m = db.get(MapSource, map_id)
@@ -313,7 +434,11 @@ def create_plots_batch(
 
 
 @app.get("/api/blocks/{block_id}", response_model=BlockOut)
-def get_block(block_id: str, db: Session = Depends(get_db)):
+def get_block(
+    block_id: str,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     b = db.get(Block, block_id)
     if not b:
         raise HTTPException(status_code=404, detail="Block not found")
@@ -321,7 +446,12 @@ def get_block(block_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/blocks/{block_id}/reshape")
-def reshape_block(block_id: str, payload: BlockReshape, db: Session = Depends(get_db)):
+def reshape_block(
+    block_id: str,
+    payload: BlockReshape,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Re-tile all plots of a block from a new quad — keeps numbers/metadata."""
     b = db.get(Block, block_id)
     if not b:
@@ -350,7 +480,11 @@ def reshape_block(block_id: str, payload: BlockReshape, db: Session = Depends(ge
 
 
 @app.patch("/api/plots/bulk")
-def bulk_update_plots(payload: BulkPlotUpdate, db: Session = Depends(get_db)):
+def bulk_update_plots(
+    payload: BulkPlotUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Apply the same field values to many plots at once (only sent fields)."""
     data = payload.model_dump(exclude_unset=True)
     ids = data.pop("ids", [])
@@ -367,7 +501,11 @@ def bulk_update_plots(payload: BulkPlotUpdate, db: Session = Depends(get_db)):
 
 
 @app.post("/api/plots/bulk-delete")
-def bulk_delete_plots(payload: BulkIds, db: Session = Depends(get_db)):
+def bulk_delete_plots(
+    payload: BulkIds,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Delete many draft plots at once (confirmed ones are skipped)."""
     if not payload.ids:
         return {"deleted": 0}
@@ -381,7 +519,11 @@ def bulk_delete_plots(payload: BulkIds, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/plots/{plot_id}", status_code=204)
-def delete_plot(plot_id: int, db: Session = Depends(get_db)):
+def delete_plot(
+    plot_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     plot = db.get(Plot, plot_id)
     if not plot:
         raise HTTPException(status_code=404, detail="Plot not found")
@@ -392,7 +534,12 @@ def delete_plot(plot_id: int, db: Session = Depends(get_db)):
 
 
 @app.patch("/api/plots/{plot_id}")
-def update_plot(plot_id: int, payload: PlotUpdate, db: Session = Depends(get_db)):
+def update_plot(
+    plot_id: int,
+    payload: PlotUpdate,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Edit an individual plot's attributes (dimensions, number, type, price)."""
     plot = db.get(Plot, plot_id)
     if not plot:
@@ -422,7 +569,11 @@ def update_plot(plot_id: int, payload: PlotUpdate, db: Session = Depends(get_db)
 
 
 @app.delete("/api/plots/group/{group_id}")
-def delete_plot_group(group_id: str, db: Session = Depends(get_db)):
+def delete_plot_group(
+    group_id: str,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Delete all draft plots of a subdivision block (by group id)."""
     n = (
         db.query(Plot)
@@ -434,7 +585,11 @@ def delete_plot_group(group_id: str, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/maps/{map_id}/plots")
-def delete_draft_plots(map_id: int, db: Session = Depends(get_db)):
+def delete_draft_plots(
+    map_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Reset: delete all unconfirmed (draft) plots of a map. Confirmed plots stay."""
     if not db.get(MapSource, map_id):
         raise HTTPException(status_code=404, detail="Map not found")
@@ -451,6 +606,7 @@ def delete_draft_plots(map_id: int, db: Session = Depends(get_db)):
 def auto_extract(
     map_id: int,
     params: AutoExtractParams | None = None,
+    _: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     """Run OpenCV detection and insert candidate plots as auto drafts."""
@@ -503,7 +659,11 @@ def auto_extract(
 
 
 @app.post("/api/maps/{map_id}/confirm")
-def confirm_map(map_id: int, db: Session = Depends(get_db)):
+def confirm_map(
+    map_id: int,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
     """Promote all draft plots of a map to public and mark the map confirmed."""
     m = db.get(MapSource, map_id)
     if not m:

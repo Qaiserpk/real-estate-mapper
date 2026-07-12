@@ -5,17 +5,24 @@ import "leaflet/dist/leaflet.css";
 import "./styles.css";
 
 import MapView from "./pages/MapView.jsx";
+import LoginPage from "./pages/LoginPage.jsx";
 import AdminLayout from "./admin/AdminLayout.jsx";
 import SocietiesPage from "./admin/SocietiesPage.jsx";
 import SocietyDetailPage from "./admin/SocietyDetailPage.jsx";
 import GeoreferencePage from "./admin/GeoreferencePage.jsx";
 import ExtractPage from "./admin/ExtractPage.jsx";
+import { AuthProvider, RequireAdmin } from "./auth.jsx";
 
 const router = createBrowserRouter([
   { path: "/", element: <MapView /> },
+  { path: "/login", element: <LoginPage /> },
   {
     path: "/admin",
-    element: <AdminLayout />,
+    element: (
+      <RequireAdmin>
+        <AdminLayout />
+      </RequireAdmin>
+    ),
     children: [
       { index: true, element: <SocietiesPage /> },
       { path: "societies/:id", element: <SocietyDetailPage /> },
@@ -27,6 +34,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <AuthProvider>
+      <RouterProvider router={router} />
+    </AuthProvider>
   </React.StrictMode>
 );

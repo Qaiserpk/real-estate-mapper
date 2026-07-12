@@ -49,3 +49,28 @@ def init_db():
         # Existing rows (e.g. seeded plots) predate the gate -> treat as confirmed.
         conn.execute(text("UPDATE plots SET confirmed = true WHERE confirmed IS NULL"))
         conn.commit()
+
+    seed_superadmin()
+
+
+def seed_superadmin():
+    """Create the platform admin on first run if it doesn't exist yet."""
+    from .config import settings
+    from .models import User
+    from .security import hash_password
+
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.email == settings.seed_admin_email).first()
+        if existing is None:
+            db.add(
+                User(
+                    email=settings.seed_admin_email,
+                    password_hash=hash_password(settings.seed_admin_password),
+                    full_name=settings.seed_admin_name,
+                    is_superadmin=True,
+                )
+            )
+            db.commit()
+    finally:
+        db.close()

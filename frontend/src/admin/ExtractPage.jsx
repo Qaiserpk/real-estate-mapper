@@ -261,7 +261,6 @@ const EMPTY_FORM = {
   plot_type: "residential",
   sizeW: "",
   sizeD: "",
-  min_price: "",
 };
 
 // Adds Geoman polygon/rectangle drawing tools and reports created shapes.
@@ -335,7 +334,7 @@ export default function ExtractPage() {
   const [editing, setEditing] = useState(false);
   const [edit, setEdit] = useState({});
   const [multiSel, setMultiSel] = useState(() => new Set()); // multi-selected plot ids
-  const BULK_EMPTY = { block: "", street: "", sizeW: "", sizeD: "", plot_type: "", min_price: "" };
+  const BULK_EMPTY = { block: "", street: "", sizeW: "", sizeD: "", plot_type: "" };
   const [bulk, setBulk] = useState(BULK_EMPTY);
   const [shapeEdit, setShapeEdit] = useState(null); // { id, geometry } while editing a plot's shape
   const shapeLayerRef = useRef(null);
@@ -504,7 +503,6 @@ export default function ExtractPage() {
         plot_type: form.plot_type,
         width_ft: Number(form.sizeW) || null,
         depth_ft: Number(form.sizeD) || null,
-        min_price: form.min_price ? Number(form.min_price) : null,
       });
       setUndoStack((s) => [...s, { kind: "plot", id: created.id, label: "1 plot" }]);
       clearPending();
@@ -541,7 +539,6 @@ export default function ExtractPage() {
         group_id: groupId,
         cell_row: c.row,
         cell_col: c.col,
-        min_price: null,
       }));
       const res = await api.createPlotsBatch(mapId, plots, {
         id: groupId,
@@ -593,7 +590,6 @@ export default function ExtractPage() {
     if (bulk.block.trim()) patch.block = bulk.block.trim();
     if (bulk.street.trim()) patch.street = bulk.street.trim();
     if (bulk.plot_type) patch.plot_type = bulk.plot_type;
-    if (bulk.min_price !== "") patch.min_price = Number(bulk.min_price);
     if (bulk.sizeW !== "") patch.width_ft = Number(bulk.sizeW);
     if (bulk.sizeD !== "") patch.depth_ft = Number(bulk.sizeD);
     if (Object.keys(patch).length === 0) {
@@ -632,7 +628,6 @@ export default function ExtractPage() {
       plot_type: selected.plot_type,
       sizeW: selected.width_ft ?? "",
       sizeD: selected.depth_ft ?? "",
-      min_price: selected.min_price ?? "",
     });
     setEditing(true);
   };
@@ -647,7 +642,6 @@ export default function ExtractPage() {
         plot_type: edit.plot_type,
         width_ft: Number(edit.sizeW) || null,
         depth_ft: Number(edit.sizeD) || null,
-        min_price: Number(edit.min_price) || null,
       });
       setSelected(updated);
       setEditing(false);
@@ -1086,15 +1080,6 @@ export default function ExtractPage() {
                       ))}
                     </select>
                   </label>
-                  <label>
-                    Min price
-                    <input
-                      type="number"
-                      value={bulk.min_price}
-                      onChange={setBulkF("min_price")}
-                      placeholder="unchanged"
-                    />
-                  </label>
                 </div>
                 <button onClick={applyBulk}>Apply to {multiSel.size}</button>
                 <button className="del-btn" onClick={deleteBulk}>
@@ -1242,14 +1227,6 @@ export default function ExtractPage() {
                         </option>
                       ))}
                     </select>
-                  </label>
-                  <label>
-                    Min price (PKR)
-                    <input
-                      type="number"
-                      value={edit.min_price}
-                      onChange={(e) => setEdit({ ...edit, min_price: e.target.value })}
-                    />
                   </label>
                   <div className="two">
                     <button onClick={saveEdit}>Save</button>
@@ -1629,15 +1606,6 @@ function SinglePlotForm({ form, set, saving, onSave, onDiscard, card }) {
           <span>×</span>
           <input type="number" value={form.sizeD} onChange={set("sizeD")} placeholder="90" />
         </div>
-      </label>
-      <label>
-        Min price (PKR, optional)
-        <input
-          type="number"
-          value={form.min_price}
-          onChange={set("min_price")}
-          placeholder="8500000"
-        />
       </label>
       <div className="two">
         <button type="submit" disabled={saving}>

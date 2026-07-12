@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import relationship
@@ -33,6 +34,51 @@ class PlotType(str, enum.Enum):
     agricultural = "agricultural"
     amenity = "amenity"
     other = "other"
+
+
+class Role(str, enum.Enum):
+    """A user's role within a single society (society-scoped)."""
+
+    admin = "admin"    # validates claims, confirms maps, approves agreements
+    owner = "owner"    # holds an approved ownership claim (usually derived)
+    dealer = "dealer"  # verified agent/dealer
+    member = "member"  # default: browse, claim, make offers
+
+
+class User(Base):
+    """Global account. Platform-wide superadmin flag; per-society roles live
+    in Membership."""
+
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, nullable=False, unique=True, index=True)
+    password_hash = Column(String, nullable=False)
+    full_name = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    is_superadmin = Column(Boolean, default=False, nullable=False)
+    disabled = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    memberships = relationship(
+        "Membership", back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class Membership(Base):
+    """Grants a user a role within a specific society."""
+
+    __tablename__ = "memberships"
+    __table_args__ = (UniqueConstraint("user_id", "society_id", name="uq_user_society"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    society_id = Column(Integer, ForeignKey("societies.id"), nullable=False, index=True)
+    role = Column(Enum(Role), default=Role.member, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", back_populates="memberships")
+    society = relationship("Society")
 
 
 class Society(Base):
@@ -113,6 +159,8 @@ class Plot(Base):
     area_sqft = Column(Float, nullable=True)  # derived from stated dimensions
     width_ft = Column(Float, nullable=True)  # stated plot size (not measured)
     depth_ft = Column(Float, nullable=True)
+    # Deprecated: pricing (asking/floor price, bids, history) moves to dedicated
+    # owner-facing listing tables in the marketplace phase. Kept for old rows.
     min_price = Column(Float, nullable=True)  # PKR
     source = Column(String, default="manual")  # manual | auto
     confidence = Column(Float, nullable=True)

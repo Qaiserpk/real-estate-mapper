@@ -5,7 +5,6 @@ import BaseLayer, { HAS_VECTOR } from "../BaseLayer.jsx";
 import {
   colorFor,
   areaBreakdown,
-  formatPKR,
   formatSize,
   STATUS_COLORS,
   STATUS_LABELS,
@@ -190,7 +189,6 @@ function SidePanel({ society, selected, error }) {
             }
           />
         )}
-        <Row k="Min price" v={formatPKR(selected.min_price)} />
         <Row k="Source" v={selected.source} />
         <Row k="Plot ID" v={selected.id} />
       </div>

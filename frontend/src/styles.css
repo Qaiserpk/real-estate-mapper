@@ -1141,3 +1141,148 @@ body,
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- Auth ---------- */
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0f172a;
+  padding: 24px;
+}
+.auth-card {
+  width: 100%;
+  max-width: 360px;
+  background: #fff;
+  border-radius: 12px;
+  padding: 28px 26px 22px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.auth-card h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  text-align: center;
+}
+.auth-tabs {
+  display: flex;
+  gap: 6px;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 4px;
+  margin-bottom: 4px;
+}
+.auth-tabs button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #475569;
+}
+.auth-tabs button.on {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+.auth-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #334155;
+}
+.auth-card input {
+  padding: 9px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  font-size: 14px;
+}
+.auth-err {
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.auth-submit {
+  margin-top: 4px;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+}
+.auth-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.auth-foot {
+  text-align: center;
+  font-size: 13px;
+  margin-top: 2px;
+}
+.auth-foot a {
+  color: #64748b;
+  text-decoration: none;
+}
+.auth-splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  color: #475569;
+}
+.auth-denied {
+  text-align: center;
+  max-width: 420px;
+}
+.auth-denied h2 {
+  margin: 0 0 8px;
+}
+
+/* Admin topbar user block */
+.admin-user {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.admin-who {
+  font-size: 13px;
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.admin-badge {
+  font-style: normal;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #1d4ed8;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+.admin-signout {
+  border: 1px solid #475569;
+  background: transparent;
+  color: #e2e8f0;
+  padding: 5px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.admin-signout:hover {
+  background: #1e293b;
+}

@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 
-from .models import PlotStatus, PlotType
+from .models import PlotStatus, PlotType, Role
 
 
 class SocietyCreate(BaseModel):
@@ -29,6 +29,56 @@ class SocietyOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---------- Auth & roles ----------
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    full_name: str | None = None
+    phone: str | None = None
+
+
+class UserOut(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: str | None
+    phone: str | None
+    is_superadmin: bool
+
+    class Config:
+        from_attributes = True
+
+
+class MembershipOut(BaseModel):
+    society_id: int
+    role: Role
+
+    class Config:
+        from_attributes = True
+
+
+class MeOut(UserOut):
+    memberships: list[MembershipOut] = []
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: MeOut
+
+
+class MembershipCreate(BaseModel):
+    user_id: int
+    society_id: int
+    role: Role = Role.member
 
 
 class ControlPoint(BaseModel):
@@ -71,7 +121,6 @@ class PlotCreate(BaseModel):
     street: str | None = None
     plot_no: str | None = None
     plot_type: PlotType = PlotType.residential
-    min_price: float | None = None
     width_ft: float | None = None
     depth_ft: float | None = None
     group_id: str | None = None
@@ -112,7 +161,6 @@ class PlotUpdate(BaseModel):
     street: str | None = None
     plot_no: str | None = None
     plot_type: PlotType | None = None
-    min_price: float | None = None
     width_ft: float | None = None
     depth_ft: float | None = None
     geometry: dict | None = None  # GeoJSON Polygon — edit plot shape
@@ -123,7 +171,6 @@ class BulkPlotUpdate(BaseModel):
     block: str | None = None
     street: str | None = None
     plot_type: PlotType | None = None
-    min_price: float | None = None
     width_ft: float | None = None
     depth_ft: float | None = None
 
@@ -148,7 +195,6 @@ class PlotProperties(BaseModel):
     area_sqft: float | None
     width_ft: float | None = None
     depth_ft: float | None = None
-    min_price: float | None
     source: str
     confidence: float | None
     group_id: str | None = None
