@@ -74,7 +74,13 @@ function DrawTools({ onCreate }) {
       removalMode: false,
       rotateMode: false,
     });
-    const handler = (e) => onCreate(e.layer);
+    // Don't keep drawing after one shape, and don't leave the drawn source layer
+    // on the map (we replace it with our own quad editor).
+    map.pm.setGlobalOptions({ continueDrawing: false });
+    const handler = (e) => {
+      map.pm.disableDraw();
+      onCreate(e.layer);
+    };
     map.on("pm:create", handler);
     return () => {
       map.off("pm:create", handler);
@@ -147,10 +153,13 @@ export default function ExtractPage() {
     setMsg(null);
     if (quad) {
       // A 4-corner block: manage it with our own editor (corner/edge/rotate handles).
+      // Normalize once here so the numbering origin is predictable but then stays
+      // fixed to the block through rotation.
+      const norm = normalizeQuad(quad);
       layer.remove();
       pendingLayer.current = null;
-      setCorners(quad);
-      setPending(geom);
+      setCorners(norm);
+      setPending(ringToGeometry(norm));
       setMode("subdivide");
     } else {
       // Irregular polygon -> single plot; keep Geoman's layer + vertex editing.
@@ -184,21 +193,17 @@ export default function ExtractPage() {
     setForm(EMPTY_FORM);
   };
 
-  // Normalize to a consistent top-left origin so numbering is predictable
-  // regardless of draw direction. To divide the other way, swap Columns/Rows.
-  const cornersUsed = useMemo(
-    () => (corners ? normalizeQuad(corners) : null),
-    [corners]
-  );
-
+  // Corners are normalized once at creation, then kept in a stable order through
+  // edits/rotation — so the numbering origin rotates *with* the block instead of
+  // jumping to a new geographic corner.
   // Live subdivision grid — always by count (columns x rows).
   const grid = useMemo(() => {
-    if (!cornersUsed) return null;
+    if (!corners) return null;
     const rows = Math.max(1, Math.floor(Number(sub.rows) || 1));
     const cols = Math.max(1, Math.floor(Number(sub.cols) || 1));
     if (rows * cols > 3000) return { rows, cols, cells: [], tooMany: true };
-    return { rows, cols, cells: subdivideQuad(cornersUsed, rows, cols) };
-  }, [cornersUsed, sub]);
+    return { rows, cols, cells: subdivideQuad(corners, rows, cols) };
+  }, [corners, sub]);
 
   // Plot number = start + (col step) * colInc + (row step) * rowInc, from the
   // chosen start corner. Blank rowInc auto-continues consecutively (cols*colInc).
@@ -486,22 +491,15 @@ export default function ExtractPage() {
             />
             {plots && (
               <GeoJSON
-                key={`${version}-${selected?.id ?? ""}`}
+                key={version}
                 data={plots}
-                style={(f) => {
-                  const isSel = selected?.id === f.properties.id;
-                  const inGroup =
-                    selected?.group_id &&
-                    f.properties.group_id === selected.group_id &&
-                    !isSel;
-                  return {
-                    color: isSel ? "#ea580c" : inGroup ? "#f59e0b" : "#0f172a",
-                    weight: isSel ? 3 : inGroup ? 2 : 1,
-                    fillColor: TYPE_COLORS[f.properties.plot_type] || "#94a3b8",
-                    fillOpacity: isSel ? 0.7 : inGroup ? 0.5 : f.properties.confirmed ? 0.55 : 0.35,
-                    dashArray: f.properties.confirmed ? null : "4",
-                  };
-                }}
+                style={(f) => ({
+                  color: "#0f172a",
+                  weight: 1,
+                  fillColor: TYPE_COLORS[f.properties.plot_type] || "#94a3b8",
+                  fillOpacity: f.properties.confirmed ? 0.55 : 0.35,
+                  dashArray: f.properties.confirmed ? null : "4",
+                })}
                 onEachFeature={(f, layer) => {
                   const p = f.properties;
                   const auto =
@@ -513,6 +511,27 @@ export default function ExtractPage() {
                   );
                   layer.on("click", () => selectPlot(p));
                 }}
+              />
+            )}
+            {/* Selection/group highlight as a separate light overlay, so selecting
+                never rebuilds the whole plots layer (which left a ghost on drag). */}
+            {plots && selected && (
+              <GeoJSON
+                key={`hl-${selected.id}`}
+                interactive={false}
+                data={{
+                  type: "FeatureCollection",
+                  features: plots.features.filter(
+                    (f) =>
+                      f.properties.id === selected.id ||
+                      (selected.group_id && f.properties.group_id === selected.group_id)
+                  ),
+                }}
+                style={(f) => ({
+                  color: f.properties.id === selected.id ? "#ea580c" : "#f59e0b",
+                  weight: f.properties.id === selected.id ? 3 : 2,
+                  fill: false,
+                })}
               />
             )}
             {pending && corners && <QuadEditor corners={corners} onChange={setQuad} />}

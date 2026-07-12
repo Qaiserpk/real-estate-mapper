@@ -514,6 +514,13 @@ body,
   display: block;
   user-select: none;
 }
+
+/* Leaflet draws a browser focus outline (an axis-aligned bounding box) on a
+   clicked vector path — remove it so selecting a rotated plot doesn't show a box. */
+.leaflet-interactive:focus,
+.leaflet-container svg path:focus {
+  outline: none;
+}
 .cp-dot {
   position: absolute;
   transform: translate(-50%, -50%);
