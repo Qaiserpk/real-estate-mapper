@@ -267,6 +267,7 @@ def _build_plot(db: Session, m: MapSource, spec: PlotCreate) -> Plot | None:
         min_price=spec.min_price,
         source="manual",
         confirmed=False,
+        group_id=spec.group_id,
         geom=from_shape(poly, srid=4326),
     )
 
@@ -317,6 +318,18 @@ def update_plot(plot_id: int, payload: PlotUpdate, db: Session = Depends(get_db)
     db.commit()
     db.refresh(plot)
     return PlotProperties.model_validate(plot, from_attributes=True).model_dump(mode="json")
+
+
+@app.delete("/api/plots/group/{group_id}")
+def delete_plot_group(group_id: str, db: Session = Depends(get_db)):
+    """Delete all draft plots of a subdivision block (by group id)."""
+    n = (
+        db.query(Plot)
+        .filter(Plot.group_id == group_id, Plot.confirmed.is_(False))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": n}
 
 
 @app.delete("/api/maps/{map_id}/plots")

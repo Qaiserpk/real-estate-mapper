@@ -8,7 +8,7 @@ import RotatedOverlay from "../RotatedOverlay.jsx";
 import BaseLayer from "../BaseLayer.jsx";
 import QuadEditor from "./QuadEditor.jsx";
 import { formatSize } from "../status.js";
-import { pixelToLatLng, subdivideQuad } from "../geo.js";
+import { pixelToLatLng, subdivideQuad, normalizeQuad } from "../geo.js";
 
 const ringToGeometry = (cs) => ({ type: "Polygon", coordinates: [[...cs, cs[0]]] });
 
@@ -107,12 +107,10 @@ export default function ExtractPage() {
     sizeD: "90",
     block: "",
     startNo: "1",
-    step: "1", // 1 = consecutive, 2 = even/odd
-    order: "row", // 'row' (row-major) | 'col' (column-major)
-    revH: false, // reverse horizontal (right -> left)
-    revV: false, // reverse vertical (bottom -> top)
-    serpentine: false,
-    swap: false, // swap plot orientation vs drawn rectangle
+    colInc: "1", // number added per column step (across)
+    rowInc: "", // per row step (down); blank = auto-continue (cols * colInc)
+    revH: false, // start-corner horizontal (right -> left)
+    revV: false, // start-corner vertical (bottom -> top)
     plot_type: "residential",
   });
   const [selected, setSelected] = useState(null); // clicked plot properties
@@ -185,12 +183,12 @@ export default function ExtractPage() {
     setForm(EMPTY_FORM);
   };
 
-  // Swapping orientation transposes the quad: columns run along the other edge.
-  const cornersUsed = useMemo(() => {
-    if (!corners) return null;
-    const [A, B, C, D] = corners;
-    return sub.swap ? [A, D, C, B] : [A, B, C, D];
-  }, [corners, sub.swap]);
+  // Normalize to a consistent top-left origin so numbering is predictable
+  // regardless of draw direction. To divide the other way, swap Columns/Rows.
+  const cornersUsed = useMemo(
+    () => (corners ? normalizeQuad(corners) : null),
+    [corners]
+  );
 
   // Live subdivision grid — always by count (columns x rows).
   const grid = useMemo(() => {
@@ -201,21 +199,16 @@ export default function ExtractPage() {
     return { rows, cols, cells: subdivideQuad(cornersUsed, rows, cols) };
   }, [cornersUsed, sub]);
 
-  // Plot number for a cell given direction / order / serpentine / step settings.
+  // Plot number = start + (col step) * colInc + (row step) * rowInc, from the
+  // chosen start corner. Blank rowInc auto-continues consecutively (cols*colInc).
   const plotNumber = (row, col, rows, cols) => {
     const start = Math.floor(Number(sub.startNo) || 1);
-    const step = Math.max(1, Math.floor(Number(sub.step) || 1));
-    let r = sub.revV ? rows - 1 - row : row;
-    let c = sub.revH ? cols - 1 - col : col;
-    let ordinal;
-    if (sub.order === "col") {
-      if (sub.serpentine && c % 2 === 1) r = rows - 1 - r;
-      ordinal = c * rows + r;
-    } else {
-      if (sub.serpentine && r % 2 === 1) c = cols - 1 - c;
-      ordinal = r * cols + c;
-    }
-    return start + ordinal * step;
+    const colInc = Math.floor(Number(sub.colInc) || 1);
+    const rowIncRaw = String(sub.rowInc).trim();
+    const rowInc = rowIncRaw === "" ? cols * colInc : Math.floor(Number(rowIncRaw) || 1);
+    const r = sub.revV ? rows - 1 - row : row;
+    const c = sub.revH ? cols - 1 - col : col;
+    return start + c * colInc + r * rowInc;
   };
 
   const previewFC = useMemo(() => {
@@ -232,7 +225,7 @@ export default function ExtractPage() {
   }, [mode, grid, sub]);
 
   // Signature so the preview layer re-renders (labels update) on any numbering change.
-  const numSig = `${sub.startNo}-${sub.step}-${sub.order}-${sub.revH}-${sub.revV}-${sub.serpentine}`;
+  const numSig = `${sub.startNo}-${sub.colInc}-${sub.rowInc}-${sub.revH}-${sub.revV}`;
 
   const setSubF = (k) => (e) => setSub({ ...sub, [k]: e.target.value });
 
@@ -268,6 +261,8 @@ export default function ExtractPage() {
     try {
       const w = Number(sub.sizeW) || null;
       const d = Number(sub.sizeD) || null;
+      const groupId =
+        (crypto.randomUUID && crypto.randomUUID()) || `blk-${Math.random().toString(36).slice(2)}`;
       const plots = grid.cells.map((c) => ({
         geometry: c.geometry,
         block: sub.block || null,
@@ -275,6 +270,7 @@ export default function ExtractPage() {
         plot_type: sub.plot_type,
         width_ft: w,
         depth_ft: d,
+        group_id: groupId,
         min_price: null,
       }));
       const res = await api.createPlotsBatch(mapId, plots);
@@ -331,6 +327,22 @@ export default function ExtractPage() {
       await api.deletePlot(id);
       if (selected?.id === id) setSelected(null);
       await refreshPlots();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const deleteGroup = async (groupId) => {
+    const count = (plots?.features || []).filter(
+      (f) => f.properties.group_id === groupId && !f.properties.confirmed
+    ).length;
+    if (!window.confirm(`Delete this whole block (${count} draft plot(s))?`)) return;
+    setError(null);
+    try {
+      const res = await api.deletePlotGroup(groupId);
+      setSelected(null);
+      await refreshPlots();
+      setMsg(`Deleted block — ${res.deleted} plot(s).`);
     } catch (e) {
       setError(e.message);
     }
@@ -456,11 +468,15 @@ export default function ExtractPage() {
                 data={plots}
                 style={(f) => {
                   const isSel = selected?.id === f.properties.id;
+                  const inGroup =
+                    selected?.group_id &&
+                    f.properties.group_id === selected.group_id &&
+                    !isSel;
                   return {
-                    color: isSel ? "#ea580c" : "#0f172a",
-                    weight: isSel ? 3 : 1,
+                    color: isSel ? "#ea580c" : inGroup ? "#f59e0b" : "#0f172a",
+                    weight: isSel ? 3 : inGroup ? 2 : 1,
                     fillColor: TYPE_COLORS[f.properties.plot_type] || "#94a3b8",
-                    fillOpacity: isSel ? 0.7 : f.properties.confirmed ? 0.55 : 0.35,
+                    fillOpacity: isSel ? 0.7 : inGroup ? 0.5 : f.properties.confirmed ? 0.55 : 0.35,
                     dashArray: f.properties.confirmed ? null : "4",
                   };
                 }}
@@ -540,6 +556,14 @@ export default function ExtractPage() {
                       </button>
                     )}
                   </div>
+                  {selected.group_id && (
+                    <button
+                      className="del-block-btn"
+                      onClick={() => deleteGroup(selected.group_id)}
+                    >
+                      Delete whole block (redo)
+                    </button>
+                  )}
                 </>
               ) : (
                 <div className="form">
@@ -692,55 +716,54 @@ export default function ExtractPage() {
                   </label>
 
                   <details className="numbering">
-                    <summary>Numbering & orientation</summary>
-                    <label className="chk">
-                      <input
-                        type="checkbox"
-                        checked={sub.swap}
-                        onChange={(e) => setSub({ ...sub, swap: e.target.checked })}
-                      />
-                      Swap plot orientation (rotate grid 90°)
-                    </label>
+                    <summary>Numbering</summary>
                     <div className="two">
                       <label>
-                        Step
-                        <input type="number" value={sub.step} onChange={setSubF("step")} />
+                        Across +/col
+                        <input type="number" value={sub.colInc} onChange={setSubF("colInc")} />
                       </label>
                       <label>
-                        Fill order
-                        <select value={sub.order} onChange={setSubF("order")}>
-                          <option value="row">Row-major</option>
-                          <option value="col">Column-major</option>
-                        </select>
+                        Down +/row
+                        <input
+                          type="number"
+                          value={sub.rowInc}
+                          onChange={setSubF("rowInc")}
+                          placeholder={`${grid.cols * (Math.floor(Number(sub.colInc) || 1))}`}
+                        />
                       </label>
                     </div>
                     <p className="hint-line">
-                      Step 1 = consecutive · 2 = even/odd (set Start to 1 or 2).
+                      Across/Down = amount added per column/row. Blank Down = continue
+                      consecutively. Odd-across + even-next-row: Across 2, Down 1.
                     </p>
-                    <label className="chk">
-                      <input
-                        type="checkbox"
-                        checked={sub.revH}
-                        onChange={(e) => setSub({ ...sub, revH: e.target.checked })}
-                      />
-                      Reverse horizontal (right → left)
-                    </label>
-                    <label className="chk">
-                      <input
-                        type="checkbox"
-                        checked={sub.revV}
-                        onChange={(e) => setSub({ ...sub, revV: e.target.checked })}
-                      />
-                      Reverse vertical (bottom → top)
-                    </label>
-                    <label className="chk">
-                      <input
-                        type="checkbox"
-                        checked={sub.serpentine}
-                        onChange={(e) => setSub({ ...sub, serpentine: e.target.checked })}
-                      />
-                      Serpentine (snake back-and-forth)
-                    </label>
+                    <div className="corner-pick">
+                      <span className="lbl">Start corner (where #{Math.floor(Number(sub.startNo) || 1)} goes)</span>
+                      <div className="corner-grid">
+                        {[
+                          ["tl", "↖"],
+                          ["tr", "↗"],
+                          ["bl", "↙"],
+                          ["br", "↘"],
+                        ].map(([code, arrow]) => {
+                          const active = (sub.revV ? "b" : "t") + (sub.revH ? "r" : "l");
+                          return (
+                            <button
+                              key={code}
+                              className={active === code ? "on" : ""}
+                              onClick={() =>
+                                setSub({
+                                  ...sub,
+                                  revH: code[1] === "r",
+                                  revV: code[0] === "b",
+                                })
+                              }
+                            >
+                              {arrow}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </details>
 
                   {grid?.tooMany ? (
@@ -751,11 +774,16 @@ export default function ExtractPage() {
                     <p className="grid-count">
                       {grid.cols} × {grid.rows} = <strong>{grid.rows * grid.cols} plots</strong>
                       <br />
-                      <span className="muted small">
-                        #{Math.floor(Number(sub.startNo) || 1)} →{" "}
-                        {Math.floor(Number(sub.startNo) || 1) +
-                          (grid.rows * grid.cols - 1) * Math.max(1, Math.floor(Number(sub.step) || 1))}
-                      </span>
+                      {(() => {
+                        const nums = grid.cells.map((c) =>
+                          plotNumber(c.row, c.col, grid.rows, grid.cols)
+                        );
+                        return (
+                          <span className="muted small">
+                            #{Math.min(...nums)} → #{Math.max(...nums)}
+                          </span>
+                        );
+                      })()}
                     </p>
                   )}
 

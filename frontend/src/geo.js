@@ -31,6 +31,26 @@ export function rmsMeters(t, points) {
   return Math.sqrt(sum / pts.length);
 }
 
+// Reorder a quad's 4 corners to a consistent [TL, TR, BR, BL] by geographic
+// position, so numbering doesn't depend on where the rectangle was drawn from.
+// Falls back to the original order for degenerate/steeply-rotated quads.
+export function normalizeQuad(corners) {
+  if (!corners || corners.length !== 4) return corners;
+  const cLng = corners.reduce((a, c) => a + c[0], 0) / 4;
+  const cLat = corners.reduce((a, c) => a + c[1], 0) / 4;
+  let TL, TR, BR, BL;
+  for (const p of corners) {
+    const left = p[0] < cLng;
+    const top = p[1] > cLat; // higher latitude = visually "up"
+    if (top && left) TL = p;
+    else if (top && !left) TR = p;
+    else if (!top && left) BL = p;
+    else BR = p;
+  }
+  if (!TL || !TR || !BR || !BL) return corners;
+  return [TL, TR, BR, BL];
+}
+
 // ---- Block subdivision (grid drawing tool) ----
 // Corners are [lng, lat] in perimeter order A -> B -> C -> D.
 // u runs along A->B (columns), v runs along A->D (rows).

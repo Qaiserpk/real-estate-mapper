@@ -73,6 +73,7 @@ class PlotCreate(BaseModel):
     min_price: float | None = None
     width_ft: float | None = None
     depth_ft: float | None = None
+    group_id: str | None = None
 
 
 class PlotUpdate(BaseModel):
@@ -101,4 +102,5 @@ class PlotProperties(BaseModel):
     min_price: float | None
     source: str
     confidence: float | None
+    group_id: str | None = None
     confirmed: bool = False

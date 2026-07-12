@@ -101,6 +101,7 @@ class Plot(Base):
     min_price = Column(Float, nullable=True)  # PKR
     source = Column(String, default="manual")  # manual | auto
     confidence = Column(Float, nullable=True)
+    group_id = Column(String, nullable=True, index=True)  # subdivision batch id
 
     # WGS84 polygon of the plot boundary.
     geom = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)
