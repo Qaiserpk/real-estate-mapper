@@ -369,6 +369,61 @@ function DrawTools({ onCreate }) {
   return null;
 }
 
+// Centroid of a polygon ring as [lng, lat].
+function centroidLngLat(geometry) {
+  const ring = geometry.coordinates[0];
+  const n = ring.length - 1;
+  let x = 0;
+  let y = 0;
+  for (let i = 0; i < n; i++) {
+    x += ring[i][0];
+    y += ring[i][1];
+  }
+  return [x / n, y / n];
+}
+// Ray-casting point-in-polygon; pt and ring are [lng, lat].
+function pointInPolygon(pt, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const hit =
+      yi > pt[1] !== yj > pt[1] &&
+      pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi;
+    if (hit) inside = !inside;
+  }
+  return inside;
+}
+
+// Lasso selection: draw a polygon; its ring (as [lng,lat]) is reported on finish.
+function LassoSelect({ onFinish }) {
+  const map = useMap();
+  useEffect(() => {
+    map.pm.enableDraw("Polygon", { finishOnDoubleClick: true, continueDrawing: false });
+    const handler = (e) => {
+      const ring = e.layer.getLatLngs()[0].map((ll) => [ll.lng, ll.lat]);
+      try {
+        map.removeLayer(e.layer);
+      } catch {
+        /* noop */
+      }
+      map.pm.disableDraw();
+      onFinish(ring);
+    };
+    map.on("pm:create", handler);
+    return () => {
+      map.off("pm:create", handler);
+      try {
+        map.pm.disableDraw();
+      } catch {
+        /* noop */
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map]);
+  return null;
+}
+
 export default function ExtractPage() {
   const { mapId } = useParams();
   const [map, setMap] = useState(null);
@@ -410,6 +465,11 @@ export default function ExtractPage() {
   const [shapeEdit, setShapeEdit] = useState(null); // { id, geometry } while editing a plot's shape
   const shapeLayerRef = useRef(null);
   const mapRef = useRef(null);
+  const [lasso, setLasso] = useState(false);
+  const lassoRef = useRef(false);
+  useEffect(() => {
+    lassoRef.current = lasso;
+  }, [lasso]);
   const [blockEdit, setBlockEdit] = useState(null); // { id, rows, cols } while re-tiling a block
   const [blockVerts, setBlockVerts] = useState(null); // editable vertex grid
   const [error, setError] = useState(null);
@@ -450,6 +510,7 @@ export default function ExtractPage() {
   }, [mapId]);
 
   const onCreate = (layer) => {
+    if (lassoRef.current) return; // the lasso tool handles its own polygon
     const geom = layer.toGeoJSON().geometry;
     const quad = quadCorners(geom);
     setMsg(null);
@@ -684,6 +745,17 @@ export default function ExtractPage() {
     const b = m.getBounds();
     const ids = features
       .filter((f) => b.contains(polygonCentroid(f.geometry)))
+      .map((f) => f.properties.id);
+    if (!ids.length) return;
+    setSelected(null);
+    setMultiSel((s) => new Set([...s, ...ids]));
+  };
+  // Add every plot whose centroid falls inside a drawn lasso polygon.
+  const selectInPolygon = (ring) => {
+    setLasso(false);
+    if (!ring || ring.length < 3) return;
+    const ids = features
+      .filter((f) => pointInPolygon(centroidLngLat(f.geometry), ring))
       .map((f) => f.properties.id);
     if (!ids.length) return;
     setSelected(null);
@@ -1101,6 +1173,7 @@ export default function ExtractPage() {
               />
             )}
             <DrawTools onCreate={onCreate} />
+            {lasso && <LassoSelect onFinish={selectInPolygon} />}
             <OverlayDrag onDelta={nudge} />
             {!pending && !shapeEdit && !blockEdit && (
               <DeselectOnClick
@@ -1728,6 +1801,15 @@ export default function ExtractPage() {
                   : `${features.length} total`}
               </span>
               <span className="subhead-actions">
+                {features.length > 0 && (
+                  <button
+                    className={`mini-btn${lasso ? " on" : ""}`}
+                    onClick={() => setLasso((v) => !v)}
+                    title="Draw a polygon on the map to select the plots inside it"
+                  >
+                    {lasso ? "Drawing… (Esc/dbl-click)" : "Lasso"}
+                  </button>
+                )}
                 {features.length > 0 && (
                   <button className="mini-btn" onClick={selectInView} title="Select plots in the current map view">
                     Select in view

@@ -2019,3 +2019,9 @@ textarea::placeholder {
   font-size: 13px;
   cursor: pointer;
 }
+
+.mini-btn.on {
+  background: #7c3aed;
+  color: #fff;
+  border-color: #7c3aed;
+}
