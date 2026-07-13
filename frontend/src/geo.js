@@ -169,6 +169,55 @@ export function coonsVertexGrid(corners, edgeThrough, rows, cols) {
   return verts;
 }
 
+// Equal-area annular-sector grid: when one block edge is a circular arc, treat
+// the block as a sector about that arc's centre. Columns split the angular span
+// into equal angles (partition lines radial from the one centre); rows split the
+// depth into equal-AREA radius bands (r^2 spaced evenly) so every plot has the
+// same area. Returns a (rows+1) x (cols+1) [lng,lat] grid, or null if no edge is
+// curved / the arc is degenerate.
+export function annularVertexGrid(corners, edgeThrough, rows, cols) {
+  const ET = edgeThrough || [null, null, null, null];
+  const k = ET.findIndex((t) => t); // first curved edge (perimeter A-B-C-D)
+  if (k < 0) return null;
+  const proj = projLocal(corners);
+  const c = corners.map(proj.to);
+  const Pk = c[k], Pk1 = c[(k + 1) % 4], Pk2 = c[(k + 2) % 4], Pk3 = c[(k + 3) % 4];
+  const apex = proj.to(ET[k]);
+  const circ = circle3(Pk, apex, Pk1);
+  if (!circ) return null;
+  const [ox, oy, Rout] = circ;
+  const norm = (x) => ((x % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const ang = (p) => Math.atan2(p[1] - oy, p[0] - ox);
+  const th0 = ang(Pk);
+  const spanCCW = norm(ang(Pk1) - th0);
+  const ccw = norm(ang(apex) - th0) <= spanCCW;
+  const span = ccw ? spanCCW : spanCCW - 2 * Math.PI;
+  // Inner radius from the two opposite corners (Pk pairs with Pk3, Pk1 with Pk2).
+  const dist = (p) => Math.hypot(p[0] - ox, p[1] - oy);
+  const Rin = (dist(Pk3) + dist(Pk2)) / 2;
+  const R2 = Rout * Rout - Rin * Rin;
+  const rAt = (b) => Math.sqrt(Math.max(0, Rout * Rout - b * R2)); // b: 0 outer -> 1 inner
+  const vertAt = (a, b) => {
+    const th = th0 + span * a;
+    const r = rAt(b);
+    return proj.from([ox + r * Math.cos(th), oy + r * Math.sin(th)]);
+  };
+  const grid = [];
+  for (let i = 0; i <= rows; i++) {
+    const row = [];
+    for (let j = 0; j <= cols; j++) {
+      let a, b;
+      if (k === 0) { a = j / cols; b = i / rows; }
+      else if (k === 2) { a = 1 - j / cols; b = 1 - i / rows; }
+      else if (k === 1) { a = i / rows; b = 1 - j / cols; }
+      else { a = 1 - i / rows; b = j / cols; } // k === 3
+      row.push(vertAt(a, b));
+    }
+    grid.push(row);
+  }
+  return grid;
+}
+
 // Densified boundary ring [lng,lat] of a (possibly curved) block, for display.
 export function blockOutline(corners, edgeThrough, perEdge = 20) {
   const [A, B, C, D] = corners;

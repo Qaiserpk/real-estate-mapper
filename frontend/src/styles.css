@@ -1878,3 +1878,35 @@ textarea::placeholder {
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px #ea580c;
 }
+
+.split-style {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.split-style .lbl {
+  font-size: 13px;
+  color: #334155;
+}
+.split-style .seg {
+  display: inline-flex;
+  background: #f1f5f9;
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+}
+.split-style .seg button {
+  border: 0;
+  background: transparent;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #475569;
+}
+.split-style .seg button.on {
+  background: #fff;
+  color: #0f172a;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}

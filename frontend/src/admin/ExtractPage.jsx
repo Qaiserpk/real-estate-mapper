@@ -13,6 +13,7 @@ import {
   pixelToLatLng,
   normalizeQuad,
   coonsVertexGrid,
+  annularVertexGrid,
   cellsFromGrid,
 } from "../geo.js";
 
@@ -457,6 +458,7 @@ export default function ExtractPage() {
     revH: false, // start-corner horizontal (right -> left)
     revV: false, // start-corner vertical (bottom -> top)
     plot_type: "residential",
+    split: "grid", // 'grid' (follow edges) | 'radial' (equal-area sector, for a curved edge)
   });
   const [selected, setSelected] = useState(null); // clicked plot properties
   const [editing, setEditing] = useState(false);
@@ -558,14 +560,18 @@ export default function ExtractPage() {
   // edits/rotation — so the numbering origin rotates *with* the block instead of
   // jumping to a new geographic corner.
   // Live subdivision grid — always by count (columns x rows).
+  const hasCurve = edgeThrough.some(Boolean);
   const grid = useMemo(() => {
     if (!corners) return null;
     const rows = Math.max(1, Math.floor(Number(sub.rows) || 1));
     const cols = Math.max(1, Math.floor(Number(sub.cols) || 1));
     if (rows * cols > 3000) return { rows, cols, cells: [], tooMany: true };
-    const verts = coonsVertexGrid(corners, edgeThrough, rows, cols);
+    const verts =
+      (sub.split === "radial" && hasCurve
+        ? annularVertexGrid(corners, edgeThrough, rows, cols)
+        : null) || coonsVertexGrid(corners, edgeThrough, rows, cols);
     return { rows, cols, verts, cells: cellsFromGrid(verts) };
-  }, [corners, edgeThrough, sub]);
+  }, [corners, edgeThrough, hasCurve, sub]);
 
   // Plot number = start + (col step) * colInc + (row step) * rowInc, from the
   // chosen start corner. Blank rowInc auto-continues consecutively (cols*colInc).
@@ -1423,6 +1429,29 @@ export default function ExtractPage() {
                       <input type="number" value={sub.rows} onChange={setSubF("rows")} />
                     </label>
                   </div>
+
+                  {hasCurve && (
+                    <div className="split-style">
+                      <span className="lbl">Split</span>
+                      <div className="seg">
+                        <button
+                          type="button"
+                          className={sub.split !== "radial" ? "on" : ""}
+                          onClick={() => setSub({ ...sub, split: "grid" })}
+                        >
+                          Grid
+                        </button>
+                        <button
+                          type="button"
+                          className={sub.split === "radial" ? "on" : ""}
+                          onClick={() => setSub({ ...sub, split: "radial" })}
+                          title="Radial partition lines from the arc's centre; every plot equal area"
+                        >
+                          Radial · equal area
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   <div className="numbering">
                     <div className="num-head">
