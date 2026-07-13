@@ -101,6 +101,7 @@ export default function BaseLayer({ language = "en", variant = "streets" }) {
   // Google imagery is raster regardless of whether the MapTiler key is set.
   if (variant === "google") return <GoogleLayer lyrs="s" />;
   if (variant === "google-hybrid") return <GoogleLayer lyrs="y" />;
+  if (variant === "google-roads") return <GoogleLayer lyrs="m" />;
 
   if (HAS_VECTOR) {
     // Remount on variant change so the GL style rebuilds cleanly.

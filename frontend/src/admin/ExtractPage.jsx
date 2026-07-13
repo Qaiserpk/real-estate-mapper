@@ -985,6 +985,7 @@ export default function ExtractPage() {
             >
               <option value="streets">Streets</option>
               <option value="satellite">Satellite</option>
+              <option value="google-roads">Google Roads</option>
               <option value="google">Google Satellite</option>
               <option value="google-hybrid">Google Hybrid</option>
             </select>
