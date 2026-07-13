@@ -29,6 +29,14 @@ function toLetters(n) {
   } while (n >= 0);
   return s;
 }
+// Inverse: "A" -> 0, "C" -> 2, "AA" -> 26. Blanks/invalid -> A (0).
+function lettersToIndex(str) {
+  const s = String(str || "").toUpperCase().replace(/[^A-Z]/g, "");
+  if (!s) return 0;
+  let n = 0;
+  for (const ch of s) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n - 1;
+}
 
 // A drawn shape is subdividable if its ring is a single quad (4 unique corners).
 function quadCorners(geometry) {
@@ -507,6 +515,7 @@ export default function ExtractPage() {
     revH: false, // start-corner horizontal (right -> left)
     revV: false, // start-corner vertical (bottom -> top)
     letters: "off", // 'off' | 'col' (letter per column) | 'row' (letter per row)
+    startLetter: "A", // first letter of the sequence in letter modes
     plot_type: "residential",
     split: "grid", // 'grid' (follow edges) | 'radial' (equal-area sector, for a curved edge)
   });
@@ -636,9 +645,11 @@ export default function ExtractPage() {
     const rowInc = rowIncRaw === "" ? cols * colInc : Math.floor(Number(rowIncRaw) || 1);
     const r = sub.revV ? rows - 1 - row : row;
     const c = sub.revH ? cols - 1 - col : col;
-    // Letter modes: a number that steps by 1 in one direction, a letter in the other.
-    if (sub.letters === "col") return `${start + r}${toLetters(c)}`; // 1A 1B / 2A 2B
-    if (sub.letters === "row") return `${start + c}${toLetters(r)}`; // 1A 1B down / 2A across
+    // Letter modes: a number that steps by 1 in one direction, a letter (from the
+    // chosen start letter) in the other.
+    const li = lettersToIndex(sub.startLetter);
+    if (sub.letters === "col") return `${start + r}${toLetters(li + c)}`; // 1A 1B / 2A 2B
+    if (sub.letters === "row") return `${start + c}${toLetters(li + r)}`;
     return String(start + c * colInc + r * rowInc);
   };
 
@@ -658,7 +669,7 @@ export default function ExtractPage() {
   // Signature so the preview layer re-renders on any change that alters the cells
   // or their labels — numbering, split style, block corners, and edge curves.
   // (react-leaflet GeoJSON only re-renders when its key changes.)
-  const numSig = `${sub.startNo}-${sub.colInc}-${sub.rowInc}-${sub.revH}-${sub.revV}-${sub.letters}`;
+  const numSig = `${sub.startNo}-${sub.colInc}-${sub.rowInc}-${sub.revH}-${sub.revV}-${sub.letters}-${sub.startLetter}`;
   const geomSig = useMemo(() => {
     const cs = corners ? corners.map((c) => c.map((n) => n.toFixed(6)).join()).join("|") : "";
     const es = edgeThrough.map((t) => (t ? t.map((n) => n.toFixed(6)).join() : "·")).join("|");
@@ -1602,6 +1613,19 @@ export default function ExtractPage() {
                         <option value="row">Letters down (1A 1B 1C…)</option>
                       </select>
                     </label>
+                    {sub.letters !== "off" && (
+                      <label className="num-letters" title="First letter of the sequence (e.g. C → 1C 1D 1E)">
+                        <span>Start letter</span>
+                        <input
+                          className="start-letter"
+                          value={sub.startLetter}
+                          onChange={(e) =>
+                            setSub({ ...sub, startLetter: e.target.value.toUpperCase().slice(0, 2) })
+                          }
+                          placeholder="A"
+                        />
+                      </label>
+                    )}
                     <p className="hint-line">
                       Blank +/row continues consecutively. Odd/even per row: +/col 2, +/row 1.
                     </p>

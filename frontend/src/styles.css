@@ -1948,3 +1948,12 @@ textarea::placeholder {
   border-radius: 6px;
   font-size: 12px;
 }
+
+.num-letters .start-letter {
+  width: 60px;
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 13px;
+  text-transform: uppercase;
+}
