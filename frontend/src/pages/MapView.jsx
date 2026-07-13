@@ -13,6 +13,7 @@ import {
   areaBreakdown,
   formatPKR,
   formatSize,
+  plotLabel,
   STATUS_COLORS,
   STATUS_LABELS,
 } from "../status.js";
@@ -115,7 +116,7 @@ export default function MapView() {
       mouseout: () => layer.setStyle({ fillOpacity: 0.55 }),
     });
     const p = feature.properties;
-    layer.bindTooltip(`Block ${p.block ?? "—"} · Plot ${p.plot_no ?? "—"}`, {
+    layer.bindTooltip(plotLabel(p, society?.hierarchy), {
       sticky: true,
     });
   };
@@ -272,15 +273,7 @@ function SidePanel({
 
   return (
     <div className="panel">
-      <h2>
-        {[
-          selected.block && `Block ${selected.block}`,
-          selected.street && `Street ${selected.street}`,
-          `Plot ${selected.plot_no ?? "—"}`,
-        ]
-          .filter(Boolean)
-          .join(" · ")}
-      </h2>
+      <h2>{plotLabel(selected, society?.hierarchy)}</h2>
       <span className="badge" style={{ background: colorFor(selected.status) }}>
         {STATUS_LABELS[selected.status] ?? selected.status}
       </span>

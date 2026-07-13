@@ -14,6 +14,11 @@ from .models import (
 )
 
 
+class LevelDef(BaseModel):
+    key: str
+    label: str
+
+
 class SocietyCreate(BaseModel):
     name: str
     region: str | None = None
@@ -23,6 +28,7 @@ class SocietyCreate(BaseModel):
     sqft_per_marla: float = 272.25
     marla_per_kanal: int = 20
     default_counter_limit: int = 3
+    hierarchy: list[LevelDef] | None = None  # None -> DEFAULT_HIERARCHY
 
 
 class SocietyOut(BaseModel):
@@ -36,6 +42,7 @@ class SocietyOut(BaseModel):
     sqft_per_marla: float
     marla_per_kanal: int
     default_counter_limit: int
+    hierarchy: list[LevelDef] | None
 
     class Config:
         from_attributes = True
@@ -53,6 +60,7 @@ class SocietyUpdate(BaseModel):
     sqft_per_marla: float | None = None
     marla_per_kanal: int | None = None
     default_counter_limit: int | None = None
+    hierarchy: list[LevelDef] | None = None
 
 
 # ---------- Auth & roles ----------
@@ -150,6 +158,7 @@ class PlotCreate(BaseModel):
     group_id: str | None = None
     cell_row: int | None = None
     cell_col: int | None = None
+    attrs: dict | None = None  # extra society-defined level values
 
 
 class BlockDef(BaseModel):
@@ -187,6 +196,7 @@ class PlotUpdate(BaseModel):
     plot_type: PlotType | None = None
     width_ft: float | None = None
     depth_ft: float | None = None
+    attrs: dict | None = None
     geometry: dict | None = None  # GeoJSON Polygon — edit plot shape
 
 
@@ -384,6 +394,7 @@ class PlotProperties(BaseModel):
     block: str | None
     street: str | None = None
     plot_no: str | None
+    attrs: dict | None = None
     plot_type: PlotType
     status: PlotStatus
     area_sqft: float | None

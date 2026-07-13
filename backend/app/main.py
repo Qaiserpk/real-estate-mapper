@@ -27,6 +27,7 @@ from .auth import (
 from .config import settings
 from .database import get_db, init_db
 from .models import (
+    DEFAULT_HIERARCHY,
     Agreement,
     AgreementStatus,
     Block,
@@ -64,6 +65,7 @@ from .schemas import (
     ContactCard,
     ContactReveal,
     GeoreferenceIn,
+    LevelDef,
     ListingCreate,
     ListingOut,
     ListingPublicOut,
@@ -121,6 +123,14 @@ def map_to_out(m: MapSource) -> MapSourceOut:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+def society_out(s: Society) -> SocietyOut:
+    """Serialize a society, filling in the default hierarchy when unset."""
+    out = SocietyOut.model_validate(s, from_attributes=True)
+    if not out.hierarchy:
+        out.hierarchy = [LevelDef(**lvl) for lvl in DEFAULT_HIERARCHY]
+    return out
 
 
 # ---------- Auth & roles ----------
@@ -219,7 +229,7 @@ def list_societies(
     q = db.query(Society)
     if not (include_archived and is_admin):
         q = q.filter(Society.status == "active")
-    return q.order_by(Society.id).all()
+    return [society_out(s) for s in q.order_by(Society.id).all()]
 
 
 @app.post("/api/societies", response_model=SocietyOut, status_code=201)
@@ -228,11 +238,14 @@ def create_society(
     _: User = Depends(require_superadmin),
     db: Session = Depends(get_db),
 ):
-    society = Society(**payload.model_dump())
+    data = payload.model_dump()
+    if not data.get("hierarchy"):
+        data["hierarchy"] = DEFAULT_HIERARCHY
+    society = Society(**data)
     db.add(society)
     db.commit()
     db.refresh(society)
-    return society
+    return society_out(society)
 
 
 @app.get("/api/societies/{society_id}", response_model=SocietyOut)
@@ -240,7 +253,7 @@ def get_society(society_id: int, db: Session = Depends(get_db)):
     society = db.get(Society, society_id)
     if not society:
         raise HTTPException(status_code=404, detail="Society not found")
-    return society
+    return society_out(society)
 
 
 @app.patch("/api/societies/{society_id}", response_model=SocietyOut)
@@ -259,7 +272,7 @@ def update_society(
         setattr(society, field, value)
     db.commit()
     db.refresh(society)
-    return society
+    return society_out(society)
 
 
 @app.delete("/api/societies/{society_id}", status_code=204)
@@ -542,6 +555,7 @@ def _build_plot(db: Session, m: MapSource, spec: PlotCreate) -> Plot | None:
         width_ft=spec.width_ft,
         depth_ft=spec.depth_ft,
         area_sqft=_stated_area(spec),  # from stated size, not the drawing
+        attrs=spec.attrs or None,
         source="manual",
         confirmed=False,
         group_id=spec.group_id,

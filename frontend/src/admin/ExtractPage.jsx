@@ -8,7 +8,7 @@ import { api, setLastSociety } from "../api.js";
 import RotatedOverlay from "../RotatedOverlay.jsx";
 import BaseLayer from "../BaseLayer.jsx";
 import QuadEditor from "./QuadEditor.jsx";
-import { formatSize } from "../status.js";
+import { formatSize, plotLabel, DEFAULT_HIERARCHY } from "../status.js";
 import {
   pixelToLatLng,
   normalizeQuad,
@@ -18,6 +18,14 @@ import {
 } from "../geo.js";
 
 const ringToGeometry = (cs) => ({ type: "Polygon", coordinates: [[...cs, cs[0]]] });
+
+// Drop blank values; return null if nothing remains (keeps plot.attrs tidy).
+function cleanAttrs(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj || {}))
+    if (v != null && String(v).trim() !== "") out[k] = String(v).trim();
+  return Object.keys(out).length ? out : null;
+}
 
 // 0 -> A, 1 -> B, … 25 -> Z, 26 -> AA (Excel-style), for alphanumeric numbering.
 function toLetters(n) {
@@ -446,6 +454,7 @@ const EMPTY_FORM = {
   plot_type: "residential",
   sizeW: "",
   sizeD: "",
+  attrs: {},
 };
 
 // Adds Geoman polygon/rectangle drawing tools and reports created shapes.
@@ -514,6 +523,7 @@ export default function ExtractPage() {
     rowInc: "", // per row step (down); blank = auto-continue (cols * colInc)
     revH: false, // start-corner horizontal (right -> left)
     revV: false, // start-corner vertical (bottom -> top)
+    attrs: {}, // extra society-level values (sub-sector, sector, phase, …)
     letters: "off", // 'off' | 'col' (letter per column) | 'row' (letter per row)
     startLetter: "A", // first letter of the sequence in letter modes
     plot_type: "residential",
@@ -702,6 +712,8 @@ export default function ExtractPage() {
   }, [blockEdit, blockVerts]);
 
   const setSubF = (k) => (e) => setSub({ ...sub, [k]: e.target.value });
+  const setFormAttr = (key) => (e) =>
+    setForm((f) => ({ ...f, attrs: { ...f.attrs, [key]: e.target.value } }));
 
   const savePlot = async (e) => {
     e.preventDefault();
@@ -717,6 +729,7 @@ export default function ExtractPage() {
         plot_type: form.plot_type,
         width_ft: Number(form.sizeW) || null,
         depth_ft: Number(form.sizeD) || null,
+        attrs: cleanAttrs(form.attrs),
       });
       setUndoStack((s) => [...s, { kind: "plot", id: created.id, label: "1 plot" }]);
       clearPending();
@@ -742,6 +755,7 @@ export default function ExtractPage() {
         sub.streetMode === "row"
           ? (sub.streetRows[row] || "").trim() || null
           : sub.street || null;
+      const attrsVal = cleanAttrs(sub.attrs);
       const plots = grid.cells.map((c) => ({
         geometry: c.geometry,
         block: sub.block || null,
@@ -753,6 +767,7 @@ export default function ExtractPage() {
         group_id: groupId,
         cell_row: c.row,
         cell_col: c.col,
+        attrs: attrsVal,
       }));
       const res = await api.createPlotsBatch(mapId, plots, {
         id: groupId,
@@ -854,9 +869,13 @@ export default function ExtractPage() {
       plot_type: selected.plot_type,
       sizeW: selected.width_ft ?? "",
       sizeD: selected.depth_ft ?? "",
+      attrs: { ...(selected.attrs || {}) },
     });
     setEditing(true);
   };
+
+  const setEditAttr = (key) => (e) =>
+    setEdit((d) => ({ ...d, attrs: { ...d.attrs, [key]: e.target.value } }));
 
   const saveEdit = async () => {
     setError(null);
@@ -868,6 +887,7 @@ export default function ExtractPage() {
         plot_type: edit.plot_type,
         width_ft: Number(edit.sizeW) || null,
         depth_ft: Number(edit.sizeD) || null,
+        attrs: cleanAttrs(edit.attrs),
       });
       setSelected(updated);
       setEditing(false);
@@ -1014,6 +1034,21 @@ export default function ExtractPage() {
       </div>
     );
   }
+
+  // Society-defined address levels drive the plot form fields.
+  const hierarchy = society.hierarchy || DEFAULT_HIERARCHY;
+  const groupLevels = hierarchy.filter((l) => l.key !== "number");
+  const streetLevel = groupLevels.find((l) => l.key === "street");
+  const blockLevel = groupLevels.find((l) => l.key === "block");
+  const extraLevels = groupLevels.filter((l) => l.key !== "street" && l.key !== "block");
+  const plotLevels = {
+    blockLevel,
+    streetLevel,
+    extraLevels,
+    numberLabel: hierarchy[0]?.label || "Plot no.",
+  };
+  const setSubAttr = (key) => (e) =>
+    setSub((s) => ({ ...s, attrs: { ...s.attrs, [key]: e.target.value } }));
 
   if (!map.transform) {
     return (
@@ -1351,15 +1386,7 @@ export default function ExtractPage() {
           {selected && !blockEdit && (
             <div className="card sel-card">
               <div className="sel-head">
-                <strong>
-                  {[
-                    selected.block && `Block ${selected.block}`,
-                    selected.street && `St ${selected.street}`,
-                    `Plot ${selected.plot_no ?? "—"}`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </strong>
+                <strong>{plotLabel(selected, hierarchy)}</strong>
                 <button className="x" onClick={() => setSelected(null)} title="Deselect">
                   ×
                 </button>
@@ -1415,23 +1442,36 @@ export default function ExtractPage() {
               ) : (
                 <div className="form">
                   <div className="two">
-                    <label>
-                      Block
-                      <input
-                        value={edit.block}
-                        onChange={(e) => setEdit({ ...edit, block: e.target.value })}
-                      />
-                    </label>
-                    <label>
-                      Street
-                      <input
-                        value={edit.street}
-                        onChange={(e) => setEdit({ ...edit, street: e.target.value })}
-                      />
-                    </label>
+                    {blockLevel && (
+                      <label>
+                        {blockLevel.label}
+                        <input
+                          value={edit.block}
+                          onChange={(e) => setEdit({ ...edit, block: e.target.value })}
+                        />
+                      </label>
+                    )}
+                    {streetLevel && (
+                      <label>
+                        {streetLevel.label}
+                        <input
+                          value={edit.street}
+                          onChange={(e) => setEdit({ ...edit, street: e.target.value })}
+                        />
+                      </label>
+                    )}
                   </div>
+                  {extraLevels.map((l) => (
+                    <label key={l.key}>
+                      {l.label}
+                      <input
+                        value={(edit.attrs && edit.attrs[l.key]) || ""}
+                        onChange={setEditAttr(l.key)}
+                      />
+                    </label>
+                  ))}
                   <label>
-                    Plot no.
+                    {hierarchy[0]?.label || "Plot no."}
                     <input
                       value={edit.plot_no}
                       onChange={(e) => setEdit({ ...edit, plot_no: e.target.value })}
@@ -1650,10 +1690,12 @@ export default function ExtractPage() {
                   </label>
 
                   <div className="two">
-                    <label>
-                      Block
-                      <input value={sub.block} onChange={setSubF("block")} placeholder="A" />
-                    </label>
+                    {blockLevel && (
+                      <label>
+                        {blockLevel.label}
+                        <input value={sub.block} onChange={setSubF("block")} placeholder="A" />
+                      </label>
+                    )}
                     <label>
                       Type
                       <select value={sub.plot_type} onChange={setSubF("plot_type")}>
@@ -1666,36 +1708,49 @@ export default function ExtractPage() {
                     </label>
                   </div>
 
-                  <div className="street-sec">
-                    <div className="row-between">
-                      <span className="lbl">Street</span>
-                      <select value={sub.streetMode} onChange={setSubF("streetMode")}>
-                        <option value="same">Same for block</option>
-                        <option value="row">Per row</option>
-                      </select>
-                    </div>
-                    {sub.streetMode === "same" ? (
-                      <input value={sub.street} onChange={setSubF("street")} placeholder="5" />
-                    ) : (
-                      <div className="street-rows">
-                        {Array.from({ length: grid.rows }).map((_, i) => (
-                          <label key={i} className="street-row">
-                            <span>Row {i + 1}</span>
-                            <input
-                              value={sub.streetRows[i] || ""}
-                              onChange={(e) =>
-                                setSub({
-                                  ...sub,
-                                  streetRows: { ...sub.streetRows, [i]: e.target.value },
-                                })
-                              }
-                              placeholder="5"
-                            />
-                          </label>
-                        ))}
+                  {extraLevels.map((l) => (
+                    <label key={l.key}>
+                      {l.label}
+                      <input
+                        value={sub.attrs[l.key] || ""}
+                        onChange={setSubAttr(l.key)}
+                        placeholder={l.label}
+                      />
+                    </label>
+                  ))}
+
+                  {streetLevel && (
+                    <div className="street-sec">
+                      <div className="row-between">
+                        <span className="lbl">{streetLevel.label}</span>
+                        <select value={sub.streetMode} onChange={setSubF("streetMode")}>
+                          <option value="same">Same for block</option>
+                          <option value="row">Per row</option>
+                        </select>
                       </div>
-                    )}
-                  </div>
+                      {sub.streetMode === "same" ? (
+                        <input value={sub.street} onChange={setSubF("street")} placeholder="5" />
+                      ) : (
+                        <div className="street-rows">
+                          {Array.from({ length: grid.rows }).map((_, i) => (
+                            <label key={i} className="street-row">
+                              <span>Row {i + 1}</span>
+                              <input
+                                value={sub.streetRows[i] || ""}
+                                onChange={(e) =>
+                                  setSub({
+                                    ...sub,
+                                    streetRows: { ...sub.streetRows, [i]: e.target.value },
+                                  })
+                                }
+                                placeholder="5"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {grid?.tooMany ? (
                     <p className="error">
@@ -1729,6 +1784,8 @@ export default function ExtractPage() {
                 <SinglePlotForm
                   form={form}
                   set={set}
+                  setAttr={setFormAttr}
+                  levels={plotLevels}
                   saving={saving}
                   onSave={savePlot}
                   onDiscard={clearPending}
@@ -1742,6 +1799,8 @@ export default function ExtractPage() {
               card
               form={form}
               set={set}
+              setAttr={setFormAttr}
+              levels={plotLevels}
               saving={saving}
               onSave={savePlot}
               onDiscard={clearPending}
@@ -1834,13 +1893,7 @@ export default function ExtractPage() {
                     style={{ background: TYPE_COLORS[f.properties.plot_type] }}
                   />
                   <span>
-                    {[
-                      f.properties.block && `B${f.properties.block}`,
-                      f.properties.street && `S${f.properties.street}`,
-                      `P${f.properties.plot_no ?? "—"}`,
-                    ]
-                      .filter(Boolean)
-                      .join("/")}{" "}
+                    {plotLabel(f.properties, hierarchy)}{" "}
                     · {formatSize(f.properties)}
                     {f.properties.source === "auto" && (
                       <span className="pill auto">
@@ -1882,21 +1935,34 @@ export default function ExtractPage() {
   );
 }
 
-function SinglePlotForm({ form, set, saving, onSave, onDiscard, card }) {
+function SinglePlotForm({ form, set, setAttr, levels, saving, onSave, onDiscard, card }) {
+  const { blockLevel, streetLevel, extraLevels, numberLabel } = levels;
   return (
     <form className={"form" + (card ? " card" : "")} onSubmit={onSave}>
-      <div className="two">
-        <label>
-          Block
-          <input value={form.block} onChange={set("block")} placeholder="A" />
+      {(blockLevel || streetLevel) && (
+        <div className="two">
+          {blockLevel && (
+            <label>
+              {blockLevel.label}
+              <input value={form.block} onChange={set("block")} placeholder="A" />
+            </label>
+          )}
+          {streetLevel && (
+            <label>
+              {streetLevel.label}
+              <input value={form.street} onChange={set("street")} placeholder="5" />
+            </label>
+          )}
+        </div>
+      )}
+      {extraLevels.map((l) => (
+        <label key={l.key}>
+          {l.label}
+          <input value={(form.attrs && form.attrs[l.key]) || ""} onChange={setAttr(l.key)} />
         </label>
-        <label>
-          Street
-          <input value={form.street} onChange={set("street")} placeholder="5" />
-        </label>
-      </div>
+      ))}
       <label>
-        Plot no.
+        {numberLabel}
         <input value={form.plot_no} onChange={set("plot_no")} placeholder="12" />
       </label>
       <label>

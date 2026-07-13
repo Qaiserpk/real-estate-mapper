@@ -2,6 +2,18 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
+import HierarchyEditor from "../components/HierarchyEditor.jsx";
+import { DEFAULT_HIERARCHY } from "../status.js";
+
+// Drop empty-label levels and re-key grouping levels from their labels.
+export function cleanHierarchy(levels) {
+  return (levels || [])
+    .filter((l, i) => i === 0 || (l.label || "").trim())
+    .map((l, i) => ({
+      key: i === 0 ? "number" : l.key,
+      label: (l.label || "").trim() || "Number",
+    }));
+}
 
 const EMPTY = {
   name: "",
@@ -9,6 +21,7 @@ const EMPTY = {
   center_lat: 31.4805,
   center_lng: 74.42,
   default_zoom: 17,
+  hierarchy: DEFAULT_HIERARCHY,
 };
 
 export default function SocietiesPage() {
@@ -72,6 +85,7 @@ export default function SocietiesPage() {
         center_lat: Number(form.center_lat),
         center_lng: Number(form.center_lng),
         default_zoom: Number(form.default_zoom),
+        hierarchy: cleanHierarchy(form.hierarchy),
       });
       setForm(EMPTY);
       load();
@@ -151,6 +165,11 @@ export default function SocietiesPage() {
               Default zoom
               <input type="number" value={form.default_zoom} onChange={set("default_zoom")} />
             </label>
+            <div className="field-label">Address hierarchy</div>
+            <HierarchyEditor
+              value={form.hierarchy}
+              onChange={(h) => setForm({ ...form, hierarchy: h })}
+            />
             {error && <p className="error">{error}</p>}
             <button disabled={busy} type="submit">
               {busy ? "Creating…" : "Create society"}

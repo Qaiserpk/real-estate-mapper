@@ -113,6 +113,16 @@ class Membership(Base):
     society = relationship("Society")
 
 
+# Ordered address levels, finest (the plot number) first. Societies choose which
+# levels they use at creation. Keys "number"/"street"/"block" map to first-class
+# columns (plot_no/street/block); any other key is stored in Plot.attrs.
+DEFAULT_HIERARCHY = [
+    {"key": "number", "label": "Number"},
+    {"key": "street", "label": "Street"},
+    {"key": "block", "label": "Block"},
+]
+
+
 class Society(Base):
     __tablename__ = "societies"
 
@@ -128,6 +138,9 @@ class Society(Base):
     sqft_per_marla = Column(Float, default=272.25)
     marla_per_kanal = Column(Integer, default=20)
     default_counter_limit = Column(Integer, default=3)
+
+    # Ordered address levels for this society (see DEFAULT_HIERARCHY).
+    hierarchy = Column(JSON, nullable=True)
 
     plots = relationship("Plot", back_populates="society", cascade="all, delete-orphan")
     maps = relationship(
@@ -185,6 +198,9 @@ class Plot(Base):
     block = Column(String, nullable=True)
     street = Column(String, nullable=True)
     plot_no = Column(String, nullable=True)
+    # Values for extra society-defined levels (sub-sector, sector, phase, …),
+    # keyed by the society hierarchy's level key.
+    attrs = Column(JSON, nullable=True)
     plot_type = Column(Enum(PlotType), default=PlotType.residential)
     status = Column(Enum(PlotStatus), default=PlotStatus.unclaimed)
 

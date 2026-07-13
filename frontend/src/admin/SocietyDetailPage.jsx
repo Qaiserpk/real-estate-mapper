@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, setLastSociety } from "../api.js";
 import { useAuth } from "../auth.jsx";
+import HierarchyEditor from "../components/HierarchyEditor.jsx";
+import { cleanHierarchy } from "./SocietiesPage.jsx";
+import { DEFAULT_HIERARCHY } from "../status.js";
 
 export default function SocietyDetailPage() {
   const { id } = useParams();
@@ -144,6 +147,7 @@ function SocietyEditForm({ society, onCancel, onSaved }) {
     sqft_per_marla: society.sqft_per_marla,
     marla_per_kanal: society.marla_per_kanal,
     default_counter_limit: society.default_counter_limit,
+    hierarchy: society.hierarchy || DEFAULT_HIERARCHY,
   });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -164,6 +168,7 @@ function SocietyEditForm({ society, onCancel, onSaved }) {
         sqft_per_marla: Number(form.sqft_per_marla),
         marla_per_kanal: Number(form.marla_per_kanal),
         default_counter_limit: Number(form.default_counter_limit),
+        hierarchy: cleanHierarchy(form.hierarchy),
       });
       onSaved(updated);
     } catch (e) {
@@ -222,6 +227,11 @@ function SocietyEditForm({ society, onCancel, onSaved }) {
           Default counter-offer limit
           <input type="number" value={form.default_counter_limit} onChange={set("default_counter_limit")} />
         </label>
+        <div className="field-label">Address hierarchy</div>
+        <HierarchyEditor
+          value={form.hierarchy}
+          onChange={(h) => setForm({ ...form, hierarchy: h })}
+        />
         {err && <p className="error">{err}</p>}
         <div className="two">
           <button disabled={busy} type="submit">
