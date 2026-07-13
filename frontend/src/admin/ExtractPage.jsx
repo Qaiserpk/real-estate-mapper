@@ -506,6 +506,7 @@ export default function ExtractPage() {
   const [bulk, setBulk] = useState(BULK_EMPTY);
   const [shapeEdit, setShapeEdit] = useState(null); // { id, geometry } while editing a plot's shape
   const shapeLayerRef = useRef(null);
+  const mapRef = useRef(null);
   const [blockEdit, setBlockEdit] = useState(null); // { id, rows, cols } while re-tiling a block
   const [blockVerts, setBlockVerts] = useState(null); // editable vertex grid
   const [error, setError] = useState(null);
@@ -760,6 +761,18 @@ export default function ExtractPage() {
   };
 
   const selectAllShown = (feats) => setMultiSel(new Set(feats.map((f) => f.properties.id)));
+  // Add every plot whose centroid is inside the current map viewport.
+  const selectInView = () => {
+    const m = mapRef.current;
+    if (!m) return;
+    const b = m.getBounds();
+    const ids = features
+      .filter((f) => b.contains(polygonCentroid(f.geometry)))
+      .map((f) => f.properties.id);
+    if (!ids.length) return;
+    setSelected(null);
+    setMultiSel((s) => new Set([...s, ...ids]));
+  };
   const clearMulti = () => setMultiSel(new Set());
   const toggleMulti = (id) =>
     setMultiSel((s) => {
@@ -1028,6 +1041,7 @@ export default function ExtractPage() {
             Trace plots · ▢/⬠ tools (top-left) · angle blocks with the ⟳ handle after drawing
           </div>
           <MapContainer
+            ref={mapRef}
             center={[society.center_lat, society.center_lng]}
             zoom={society.default_zoom}
             style={{ height: "560px" }}
@@ -1727,11 +1741,18 @@ export default function ExtractPage() {
                   ? `Showing ${visibleFeatures.length} of ${features.length}`
                   : `${features.length} total`}
               </span>
-              {visibleFeatures.length > 0 && (
-                <button className="mini-btn" onClick={() => selectAllShown(visibleFeatures)}>
-                  Select shown
-                </button>
-              )}
+              <span className="subhead-actions">
+                {features.length > 0 && (
+                  <button className="mini-btn" onClick={selectInView} title="Select plots in the current map view">
+                    Select in view
+                  </button>
+                )}
+                {visibleFeatures.length > 0 && (
+                  <button className="mini-btn" onClick={() => selectAllShown(visibleFeatures)}>
+                    Select shown
+                  </button>
+                )}
+              </span>
             </div>
 
             <ul className="list plot-list">
