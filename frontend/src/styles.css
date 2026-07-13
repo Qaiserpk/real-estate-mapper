@@ -889,26 +889,13 @@ body,
   border-radius: 6px;
   padding: 6px 10px;
 }
-.numbering summary {
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
+.num-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  list-style: none;
-}
-.numbering summary::-webkit-details-marker {
-  display: none;
-}
-.numbering summary::before {
-  content: "▸";
-  font-size: 10px;
-  color: #94a3b8;
-}
-.numbering[open] summary::before {
-  content: "▾";
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
 }
 .num-sum {
   margin-left: auto;

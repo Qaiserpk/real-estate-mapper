@@ -1279,6 +1279,73 @@ export default function ExtractPage() {
                     </label>
                   </div>
 
+                  <div className="numbering">
+                    <div className="num-head">
+                      <span>Numbering</span>
+                      <span className="num-sum">
+                        #{Math.floor(Number(sub.startNo) || 1)}{" "}
+                        {{ tl: "↖", tr: "↗", bl: "↙", br: "↘" }[
+                          (sub.revV ? "b" : "t") + (sub.revH ? "r" : "l")
+                        ]}{" "}
+                        · +{Math.floor(Number(sub.colInc) || 1)}/col ·{" "}
+                        {String(sub.rowInc).trim() === ""
+                          ? "consecutive"
+                          : `+${Math.floor(Number(sub.rowInc) || 1)}/row`}
+                      </span>
+                    </div>
+                    <div className="num-grid">
+                      <label title="First plot number">
+                        Start #
+                        <input type="number" value={sub.startNo} onChange={setSubF("startNo")} />
+                      </label>
+                      <label title="Amount added moving across each column">
+                        +/col
+                        <input type="number" value={sub.colInc} onChange={setSubF("colInc")} />
+                      </label>
+                      <label title="Amount added moving down each row. Blank = continue consecutively.">
+                        +/row
+                        <input
+                          type="number"
+                          value={sub.rowInc}
+                          onChange={setSubF("rowInc")}
+                          placeholder={`${grid.cols * (Math.floor(Number(sub.colInc) || 1))}`}
+                        />
+                      </label>
+                      <div className="corner-inline" title="Where the start number sits">
+                        <span className="lbl">Corner</span>
+                        <div className="corner-grid">
+                          {[
+                            ["tl", "↖"],
+                            ["tr", "↗"],
+                            ["bl", "↙"],
+                            ["br", "↘"],
+                          ].map(([code, arrow]) => {
+                            const active = (sub.revV ? "b" : "t") + (sub.revH ? "r" : "l");
+                            return (
+                              <button
+                                key={code}
+                                type="button"
+                                className={active === code ? "on" : ""}
+                                onClick={() =>
+                                  setSub({
+                                    ...sub,
+                                    revH: code[1] === "r",
+                                    revV: code[0] === "b",
+                                  })
+                                }
+                              >
+                                {arrow}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                    <p className="hint-line">
+                      Blank +/row continues consecutively. Odd/even per row: +/col 2, +/row 1.
+                    </p>
+                  </div>
+
                   <label>
                     Plot size (ft) — width × depth
                     <div className="dim-row">
@@ -1335,73 +1402,6 @@ export default function ExtractPage() {
                       </div>
                     )}
                   </div>
-
-                  <details className="numbering">
-                    <summary>
-                      <span>Numbering</span>
-                      <span className="num-sum">
-                        #{Math.floor(Number(sub.startNo) || 1)}{" "}
-                        {{ tl: "↖", tr: "↗", bl: "↙", br: "↘" }[
-                          (sub.revV ? "b" : "t") + (sub.revH ? "r" : "l")
-                        ]}{" "}
-                        · +{Math.floor(Number(sub.colInc) || 1)}/col ·{" "}
-                        {String(sub.rowInc).trim() === ""
-                          ? "consecutive"
-                          : `+${Math.floor(Number(sub.rowInc) || 1)}/row`}
-                      </span>
-                    </summary>
-                    <div className="num-grid">
-                      <label title="First plot number">
-                        Start #
-                        <input type="number" value={sub.startNo} onChange={setSubF("startNo")} />
-                      </label>
-                      <label title="Amount added moving across each column">
-                        +/col
-                        <input type="number" value={sub.colInc} onChange={setSubF("colInc")} />
-                      </label>
-                      <label title="Amount added moving down each row. Blank = continue consecutively.">
-                        +/row
-                        <input
-                          type="number"
-                          value={sub.rowInc}
-                          onChange={setSubF("rowInc")}
-                          placeholder={`${grid.cols * (Math.floor(Number(sub.colInc) || 1))}`}
-                        />
-                      </label>
-                      <div className="corner-inline" title="Where the start number sits">
-                        <span className="lbl">Corner</span>
-                        <div className="corner-grid">
-                          {[
-                            ["tl", "↖"],
-                            ["tr", "↗"],
-                            ["bl", "↙"],
-                            ["br", "↘"],
-                          ].map(([code, arrow]) => {
-                            const active = (sub.revV ? "b" : "t") + (sub.revH ? "r" : "l");
-                            return (
-                              <button
-                                key={code}
-                                type="button"
-                                className={active === code ? "on" : ""}
-                                onClick={() =>
-                                  setSub({
-                                    ...sub,
-                                    revH: code[1] === "r",
-                                    revV: code[0] === "b",
-                                  })
-                                }
-                              >
-                                {arrow}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                    <p className="hint-line">
-                      Blank +/row continues consecutively. Odd/even per row: +/col 2, +/row 1.
-                    </p>
-                  </details>
 
                   {grid?.tooMany ? (
                     <p className="error">
