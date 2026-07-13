@@ -44,7 +44,8 @@ export const api = {
   grantMembership: (body) =>
     req("/api/memberships", { method: "POST", ...jsonBody(body) }),
 
-  listSocieties: () => req("/api/societies"),
+  listSocieties: (opts) =>
+    req(`/api/societies${opts?.includeArchived ? "?include_archived=1" : ""}`),
   getSociety: (id) => req(`/api/societies/${id}`),
   createSociety: (body) =>
     req("/api/societies", {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api.js";
+import { useAuth } from "../auth.jsx";
 
 const EMPTY = {
   name: "",
@@ -11,15 +12,38 @@ const EMPTY = {
 };
 
 export default function SocietiesPage() {
+  const { user } = useAuth();
   const [societies, setSocieties] = useState([]);
   const [form, setForm] = useState(EMPTY);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const load = () => api.listSocieties().then(setSocieties).catch((e) => setError(e.message));
+  const load = () =>
+    api
+      .listSocieties({ includeArchived: true })
+      .then(setSocieties)
+      .catch((e) => setError(e.message));
   useEffect(() => {
     load();
   }, []);
+
+  const toggleStatus = async (s) => {
+    const next = s.status === "active" ? "archived" : "active";
+    if (
+      next === "archived" &&
+      !window.confirm(
+        `Disable “${s.name}”? It will be hidden from the public map until re-enabled.`
+      )
+    )
+      return;
+    setError(null);
+    try {
+      await api.updateSociety(s.id, { status: next });
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -54,16 +78,27 @@ export default function SocietiesPage() {
         <section className="card">
           <h2>All societies</h2>
           {societies.length === 0 && <p className="muted">None yet.</p>}
-          <ul className="list">
+          <ul className="list soc-list">
             {societies.map((s) => (
-              <li key={s.id}>
-                <Link to={`/admin/societies/${s.id}`}>
-                  <strong>{s.name}</strong>
-                </Link>
-                <span className="muted">
-                  {" "}
-                  · {s.region || "—"} · zoom {s.default_zoom}
-                </span>
+              <li
+                key={s.id}
+                className={s.status === "archived" ? "soc-row archived" : "soc-row"}
+              >
+                <div className="soc-main">
+                  <Link to={`/admin/societies/${s.id}`}>
+                    <strong>{s.name}</strong>
+                  </Link>
+                  <span className={`pill pill-${s.status}`}>{s.status}</span>
+                  <span className="muted"> · {s.region || "—"} · zoom {s.default_zoom}</span>
+                </div>
+                {user?.is_superadmin && (
+                  <button
+                    className={s.status === "active" ? "toggle-off" : "toggle-on"}
+                    onClick={() => toggleStatus(s)}
+                  >
+                    {s.status === "active" ? "Disable" : "Enable"}
+                  </button>
+                )}
               </li>
             ))}
           </ul>

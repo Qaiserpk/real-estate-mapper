@@ -49,7 +49,8 @@ export default function MapView() {
     fetch("/api/societies")
       .then((r) => r.json())
       .then((list) => {
-        if (!list.length) throw new Error("No societies. Run the seed script.");
+        if (!list.length)
+          throw new Error("No active society. An admin can enable one.");
         setSociety(list[0]);
         return refreshPlots(list[0].id);
       })

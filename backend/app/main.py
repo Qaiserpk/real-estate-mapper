@@ -19,6 +19,7 @@ from .extraction import detect_plots
 
 from .auth import (
     get_current_user,
+    get_current_user_optional,
     is_society_admin,
     require_admin,
     require_superadmin,
@@ -202,8 +203,23 @@ def grant_membership(
 
 
 @app.get("/api/societies", response_model=list[SocietyOut])
-def list_societies(db: Session = Depends(get_db)):
-    return db.query(Society).order_by(Society.id).all()
+def list_societies(
+    include_archived: bool = False,
+    user: User | None = Depends(get_current_user_optional),
+    db: Session = Depends(get_db),
+):
+    """Public: active societies only. Admins may include archived ones."""
+    is_admin = user is not None and (
+        user.is_superadmin
+        or db.query(Membership)
+        .filter(Membership.user_id == user.id, Membership.role == Role.admin)
+        .first()
+        is not None
+    )
+    q = db.query(Society)
+    if not (include_archived and is_admin):
+        q = q.filter(Society.status == "active")
+    return q.order_by(Society.id).all()
 
 
 @app.post("/api/societies", response_model=SocietyOut, status_code=201)
