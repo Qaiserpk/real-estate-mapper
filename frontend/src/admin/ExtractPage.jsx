@@ -4,7 +4,7 @@ import { MapContainer, GeoJSON, Marker, useMap, useMapEvents } from "react-leafl
 import L from "leaflet";
 import "@geoman-io/leaflet-geoman-free";
 import "@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css";
-import { api } from "../api.js";
+import { api, setLastSociety } from "../api.js";
 import RotatedOverlay from "../RotatedOverlay.jsx";
 import BaseLayer from "../BaseLayer.jsx";
 import QuadEditor from "./QuadEditor.jsx";
@@ -369,6 +369,7 @@ export default function ExtractPage() {
       .getMap(mapId)
       .then((m) => {
         setMap(m);
+        setLastSociety(m.society_id);
         return api.getSociety(m.society_id).then(setSociety);
       })
       .then(refreshPlots)

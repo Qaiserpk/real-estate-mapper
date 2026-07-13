@@ -6,6 +6,13 @@ export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t) =>
   t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY);
 
+// Remembers the society most recently worked on, so the map opens there.
+const LAST_SOCIETY_KEY = "propmap_last_society";
+export const getLastSociety = () =>
+  Number(localStorage.getItem(LAST_SOCIETY_KEY)) || null;
+export const setLastSociety = (id) =>
+  localStorage.setItem(LAST_SOCIETY_KEY, String(id));
+
 async function req(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   const token = getToken();

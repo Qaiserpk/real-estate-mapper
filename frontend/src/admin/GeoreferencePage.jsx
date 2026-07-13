@@ -7,7 +7,7 @@ import {
   useMap,
   useMapEvents,
 } from "react-leaflet";
-import { api } from "../api.js";
+import { api, setLastSociety } from "../api.js";
 import RotatedOverlay from "../RotatedOverlay.jsx";
 import BaseLayer from "../BaseLayer.jsx";
 import { residualMeters, rmsMeters } from "../geo.js";
@@ -140,6 +140,7 @@ export default function GeoreferencePage() {
       .getMap(mapId)
       .then((m) => {
         setMap(m);
+        setLastSociety(m.society_id);
         if (m.transform) {
           setTransform(m.transform);
           setShowOverlay(true);

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api.js";
+import { api, setLastSociety } from "../api.js";
 import { useAuth } from "../auth.jsx";
 
 export default function SocietyDetailPage() {
@@ -16,6 +16,7 @@ export default function SocietyDetailPage() {
   const loadMaps = () => api.listMaps(id).then(setMaps).catch((e) => setError(e.message));
 
   useEffect(() => {
+    setLastSociety(id); // remember this as the society being worked on
     api.getSociety(id).then(setSociety).catch((e) => setError(e.message));
     loadMaps();
     // eslint-disable-next-line react-hooks/exhaustive-deps

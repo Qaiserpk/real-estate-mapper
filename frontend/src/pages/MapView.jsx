@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { MapContainer, GeoJSON } from "react-leaflet";
 import BaseLayer, { HAS_VECTOR } from "../BaseLayer.jsx";
-import { api } from "../api.js";
+import { api, getLastSociety } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import AppHeader from "../components/AppHeader.jsx";
 import ClaimModal from "../components/ClaimModal.jsx";
@@ -51,8 +51,13 @@ export default function MapView() {
       .then((list) => {
         if (!list.length)
           throw new Error("No active society. An admin can enable one.");
-        setSociety(list[0]);
-        return refreshPlots(list[0].id);
+        // Default to the last society worked on; else the newest active one.
+        const lastId = getLastSociety();
+        const chosen =
+          list.find((s) => s.id === lastId) ||
+          [...list].sort((a, b) => b.id - a.id)[0];
+        setSociety(chosen);
+        return refreshPlots(chosen.id);
       })
       .catch((e) => setError(e.message));
   }, []);
