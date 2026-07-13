@@ -55,6 +55,7 @@ export const api = {
     }),
   updateSociety: (id, patch) =>
     req(`/api/societies/${id}`, { method: "PATCH", ...jsonBody(patch) }),
+  deleteSociety: (id) => req(`/api/societies/${id}`, { method: "DELETE" }),
   getPlots: (id) => req(`/api/societies/${id}/plots`),
 
   listMaps: (societyId) => req(`/api/societies/${societyId}/maps`),

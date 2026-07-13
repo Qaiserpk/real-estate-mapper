@@ -262,6 +262,83 @@ def update_society(
     return society
 
 
+@app.delete("/api/societies/{society_id}", status_code=204)
+def delete_society(
+    society_id: int,
+    _: User = Depends(require_superadmin),
+    db: Session = Depends(get_db),
+):
+    """Permanently delete a society and everything under it (plots, maps,
+    blocks, claims + evidence, listings, offers, agreements, memberships)."""
+    society = db.get(Society, society_id)
+    if not society:
+        raise HTTPException(status_code=404, detail="Society not found")
+
+    # Collect files to remove from disk after the DB rows are gone.
+    claim_ids = [
+        cid for (cid,) in db.query(Claim.id).filter(Claim.society_id == society_id).all()
+    ]
+    evidence_files = []
+    if claim_ids:
+        evidence_files = [
+            fn
+            for (fn,) in db.query(ClaimEvidence.filename)
+            .filter(ClaimEvidence.claim_id.in_(claim_ids))
+            .all()
+        ]
+    map_files = [
+        fn
+        for (fn,) in db.query(MapSource.filename)
+        .filter(MapSource.society_id == society_id)
+        .all()
+    ]
+
+    # Delete dependents child-first so no foreign key is left dangling.
+    db.query(Agreement).filter(Agreement.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    db.query(Offer).filter(Offer.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    db.query(Listing).filter(Listing.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    if claim_ids:
+        db.query(ClaimEvidence).filter(ClaimEvidence.claim_id.in_(claim_ids)).delete(
+            synchronize_session=False
+        )
+    db.query(Claim).filter(Claim.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    db.query(Block).filter(Block.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    db.query(Plot).filter(Plot.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    db.query(MapSource).filter(MapSource.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    db.query(Membership).filter(Membership.society_id == society_id).delete(
+        synchronize_session=False
+    )
+    db.query(Society).filter(Society.id == society_id).delete(
+        synchronize_session=False
+    )
+    db.commit()
+
+    for fn in evidence_files:
+        try:
+            os.remove(os.path.join(settings.evidence_dir, fn))
+        except OSError:
+            pass
+    for fn in map_files:
+        try:
+            os.remove(os.path.join(settings.upload_dir, fn))
+        except OSError:
+            pass
+
+
 def feature_collection(rows) -> dict:
     """Build a GeoJSON FeatureCollection from (Plot, geojson_str) rows."""
     features = []

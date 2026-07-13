@@ -1825,3 +1825,23 @@ button.btn-link:disabled {
 .toggle-on:hover {
   background: #f0fdf4;
 }
+
+.soc-actions {
+  display: flex;
+  gap: 6px;
+}
+.soc-delete {
+  border: 1px solid #fecaca;
+  background: #fff;
+  color: #b91c1c;
+  padding: 4px 12px;
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.soc-delete:hover {
+  background: #b91c1c;
+  color: #fff;
+  border-color: #b91c1c;
+}

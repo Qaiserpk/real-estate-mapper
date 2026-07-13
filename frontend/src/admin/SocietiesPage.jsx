@@ -27,6 +27,23 @@ export default function SocietiesPage() {
     load();
   }, []);
 
+  const removeSociety = async (s) => {
+    if (
+      !window.confirm(
+        `Delete “${s.name}” permanently?\n\nThis removes its maps, plots, blocks, ` +
+          `claims, listings, offers and agreements. This cannot be undone.`
+      )
+    )
+      return;
+    setError(null);
+    try {
+      await api.deleteSociety(s.id);
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
   const toggleStatus = async (s) => {
     const next = s.status === "active" ? "archived" : "active";
     if (
@@ -92,12 +109,17 @@ export default function SocietiesPage() {
                   <span className="muted"> · {s.region || "—"} · zoom {s.default_zoom}</span>
                 </div>
                 {user?.is_superadmin && (
-                  <button
-                    className={s.status === "active" ? "toggle-off" : "toggle-on"}
-                    onClick={() => toggleStatus(s)}
-                  >
-                    {s.status === "active" ? "Disable" : "Enable"}
-                  </button>
+                  <div className="soc-actions">
+                    <button
+                      className={s.status === "active" ? "toggle-off" : "toggle-on"}
+                      onClick={() => toggleStatus(s)}
+                    >
+                      {s.status === "active" ? "Disable" : "Enable"}
+                    </button>
+                    <button className="soc-delete" onClick={() => removeSociety(s)}>
+                      Delete
+                    </button>
+                  </div>
                 )}
               </li>
             ))}
