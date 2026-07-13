@@ -1509,6 +1509,15 @@ export default function ExtractPage() {
               {mode === "subdivide" && (
                 <div className="form">
                   <div className="two">
+                    <button onClick={saveGrid} disabled={saving || !grid?.cells?.length}>
+                      {saving ? "Creating…" : `Create ${grid?.cells?.length || 0} plots`}
+                    </button>
+                    <button type="button" className="ghost" onClick={clearPending}>
+                      Discard
+                    </button>
+                  </div>
+
+                  <div className="two">
                     <label>
                       Columns
                       <input type="number" value={sub.cols} onChange={setSubF("cols")} />
@@ -1558,9 +1567,22 @@ export default function ExtractPage() {
                       </span>
                     </div>
                     <div className="num-grid">
-                      <label title="First plot number">
-                        Start #
-                        <input type="number" value={sub.startNo} onChange={setSubF("startNo")} />
+                      <label title={sub.letters === "off" ? "First plot number" : "First plot number, e.g. 1A"}>
+                        {sub.letters === "off" ? "Start #" : "Start"}
+                        {sub.letters === "off" ? (
+                          <input type="number" value={sub.startNo} onChange={setSubF("startNo")} />
+                        ) : (
+                          <input
+                            value={`${sub.startNo}${sub.startLetter}`}
+                            onChange={(e) => {
+                              const v = e.target.value.toUpperCase();
+                              const num = (v.match(/\d+/) || [""])[0];
+                              const letter = (v.match(/[A-Z]+/) || [""])[0];
+                              setSub({ ...sub, startNo: num, startLetter: letter || "A" });
+                            }}
+                            placeholder="1A"
+                          />
+                        )}
                       </label>
                       <label title="Amount added moving across each column">
                         +/col
@@ -1613,19 +1635,6 @@ export default function ExtractPage() {
                         <option value="row">Letters down (1A 1B 1C…)</option>
                       </select>
                     </label>
-                    {sub.letters !== "off" && (
-                      <label className="num-letters" title="First letter of the sequence (e.g. C → 1C 1D 1E)">
-                        <span>Start letter</span>
-                        <input
-                          className="start-letter"
-                          value={sub.startLetter}
-                          onChange={(e) =>
-                            setSub({ ...sub, startLetter: e.target.value.toUpperCase().slice(0, 2) })
-                          }
-                          placeholder="A"
-                        />
-                      </label>
-                    )}
                     <p className="hint-line">
                       Blank +/row continues consecutively. Odd/even per row: +/col 2, +/row 1.
                     </p>
@@ -1713,15 +1722,6 @@ export default function ExtractPage() {
                       })()}
                     </p>
                   )}
-
-                  <div className="two">
-                    <button onClick={saveGrid} disabled={saving || !grid?.cells?.length}>
-                      {saving ? "Creating…" : `Create ${grid?.cells?.length || 0} plots`}
-                    </button>
-                    <button type="button" className="ghost" onClick={clearPending}>
-                      Discard
-                    </button>
-                  </div>
                 </div>
               )}
 
