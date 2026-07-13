@@ -193,31 +193,159 @@ function PlotLabels({ features, cap = 350 }) {
   );
 }
 
-// Editable single-plot shape: Geoman vertex editing (drag corners, add vertices
-// via midpoint handles). Exposes the live layer through layerRef for saving.
+// ---- Arc/bulge geometry (local equirectangular metres so it's zoom-stable) ----
+function projector(lat0, lng0) {
+  const mLat = 110540;
+  const mLng = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  return {
+    to: ([lng, lat]) => [(lng - lng0) * mLng, (lat - lat0) * mLat],
+    from: ([x, y]) => [lng0 + x / mLng, lat0 + y / mLat],
+  };
+}
+// Circle through 3 planar points -> [cx, cy, r], or null if ~collinear.
+function circleThrough(a, b, c) {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-6) return null;
+  const ua = a[0] ** 2 + a[1] ** 2;
+  const ub = b[0] ** 2 + b[1] ** 2;
+  const uc = c[0] ** 2 + c[1] ** 2;
+  const cx = (ua * (b[1] - c[1]) + ub * (c[1] - a[1]) + uc * (a[1] - b[1])) / d;
+  const cy = (ua * (c[0] - b[0]) + ub * (a[0] - c[0]) + uc * (b[0] - a[0])) / d;
+  return [cx, cy, Math.hypot(a[0] - cx, a[1] - cy)];
+}
+// Points from A along the circular arc through T towards B (B excluded).
+function arcSamples(A, B, T) {
+  const c = circleThrough(A, B, T);
+  if (!c) return [A];
+  const [cx, cy, r] = c;
+  const norm = (x) => ((x % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const ang = (p) => Math.atan2(p[1] - cy, p[0] - cx);
+  const a1 = ang(A);
+  const spanCCW = norm(ang(B) - a1);
+  const ccw = norm(ang(T) - a1) <= spanCCW;
+  const span = ccw ? spanCCW : spanCCW - 2 * Math.PI;
+  const steps = Math.max(2, Math.min(80, Math.round(Math.abs(span) / (Math.PI / 60))));
+  const out = [];
+  for (let i = 0; i < steps; i++) {
+    const a = a1 + span * (i / steps);
+    out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+  }
+  return out;
+}
+function densifyRing(base, through, proj) {
+  const xy = base.map(proj.to);
+  const n = base.length;
+  const ring = [];
+  for (let i = 0; i < n; i++) {
+    const A = xy[i];
+    const B = xy[(i + 1) % n];
+    const T = through[i] ? proj.to(through[i]) : null;
+    if (!T) ring.push(A);
+    else ring.push(...arcSamples(A, B, T));
+  }
+  return ring.map(proj.from); // [lng,lat] open ring
+}
+
+// Editable single-plot shape: drag corners to move; drag an edge's dot to bulge
+// it into a circular arc; double-click a dot to straighten; double-click a
+// corner to remove it. layerRef holds the live (densified) polygon for saving.
 function ShapeEditor({ geometry, layerRef }) {
   const map = useMap();
   useEffect(() => {
-    const layer = L.geoJSON(
-      { type: "Feature", geometry, properties: {} },
-      { style: { color: "#ea580c", weight: 3, fillColor: "#f97316", fillOpacity: 0.25 } }
-    ).getLayers()[0];
-    layer.addTo(map);
-    try {
-      layer.pm.enable({ allowSelfIntersection: false });
-    } catch {
-      /* geoman edit unavailable */
-    }
-    layerRef.current = layer;
+    const coords = geometry?.coordinates?.[0] || [];
+    const base = coords.slice(0, -1).map(([lng, lat]) => [lng, lat]); // drop closing dup
+    if (base.length < 3) return;
+    const through = base.map(() => null); // per-edge arc through-point ([lng,lat]) or null
+
+    const lat0 = base.reduce((s, p) => s + p[1], 0) / base.length;
+    const lng0 = base.reduce((s, p) => s + p[0], 0) / base.length;
+    const proj = projector(lat0, lng0);
+
+    map.doubleClickZoom.disable();
+    const poly = L.polygon([], {
+      color: "#ea580c",
+      weight: 3,
+      fillColor: "#f97316",
+      fillOpacity: 0.25,
+    }).addTo(map);
+    layerRef.current = poly;
+
+    const cornerIcon = L.divIcon({ className: "arc-h arc-corner", iconSize: [12, 12], iconAnchor: [6, 6] });
+    const edgeIcon = L.divIcon({ className: "arc-h arc-edge", iconSize: [14, 14], iconAnchor: [7, 7] });
+
+    let cornerMarkers = [];
+    let edgeMarkers = [];
+
+    const midLL = (i) => {
+      const A = base[i];
+      const B = base[(i + 1) % base.length];
+      return [(A[1] + B[1]) / 2, (A[0] + B[0]) / 2];
+    };
+
+    const redraw = () => {
+      const ring = densifyRing(base, through, proj);
+      poly.setLatLngs(ring.map(([lng, lat]) => [lat, lng]));
+      edgeMarkers.forEach((m, i) => {
+        if (!through[i]) m.setLatLng(midLL(i));
+      });
+    };
+
+    const clearHandles = () => {
+      cornerMarkers.forEach((m) => map.removeLayer(m));
+      edgeMarkers.forEach((m) => map.removeLayer(m));
+      cornerMarkers = [];
+      edgeMarkers = [];
+    };
+
+    const buildHandles = () => {
+      clearHandles();
+      base.forEach((p, i) => {
+        const m = L.marker([p[1], p[0]], { icon: cornerIcon, draggable: true }).addTo(map);
+        m.on("drag", (e) => {
+          const ll = e.target.getLatLng();
+          base[i] = [ll.lng, ll.lat];
+          redraw();
+        });
+        m.on("dblclick", (e) => {
+          L.DomEvent.stopPropagation(e);
+          if (base.length <= 3) return;
+          base.splice(i, 1);
+          through.splice(i, 1);
+          buildHandles();
+          redraw();
+        });
+        cornerMarkers.push(m);
+      });
+      base.forEach((_, i) => {
+        const start = through[i] ? [through[i][1], through[i][0]] : midLL(i);
+        const m = L.marker(start, { icon: edgeIcon, draggable: true }).addTo(map);
+        m.on("drag", (e) => {
+          const ll = e.target.getLatLng();
+          through[i] = [ll.lng, ll.lat];
+          redraw();
+        });
+        m.on("dblclick", (e) => {
+          L.DomEvent.stopPropagation(e);
+          through[i] = null;
+          m.setLatLng(midLL(i));
+          redraw();
+        });
+        edgeMarkers.push(m);
+      });
+    };
+
+    buildHandles();
+    redraw();
+
     return () => {
+      clearHandles();
       try {
-        layer.pm.disable();
+        map.removeLayer(poly);
       } catch {
         /* noop */
       }
       try {
-        map.removeLayer(layer);
-        layer.remove();
+        map.doubleClickZoom.enable();
       } catch {
         /* noop */
       }
@@ -1135,8 +1263,9 @@ export default function ExtractPage() {
               {shapeEdit ? (
                 <div className="form">
                   <p className="muted small">
-                    Drag vertices to reshape. Click a midpoint dot to add a vertex.
-                    Number, block, size &amp; group are kept.
+                    Drag <b>corners</b> to reshape. Drag an <b>edge dot</b> to curve
+                    it into an arc; double-click the dot to straighten, or a corner
+                    to remove it. Number, block, size &amp; group are kept.
                   </p>
                   <div className="two">
                     <button onClick={saveShape}>Save shape</button>
