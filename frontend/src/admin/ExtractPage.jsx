@@ -229,6 +229,8 @@ function polygonCentroid(geometry) {
 }
 const labelIcon = (no) =>
   L.divIcon({ className: "plot-label", html: `<span>${no}</span>`, iconSize: [0, 0] });
+const rowBadgeIcon = (n) =>
+  L.divIcon({ className: "row-badge", html: `<span>R${n}</span>`, iconSize: [0, 0] });
 
 // Level-of-detail plot-number labels: only render for plots in the current
 // viewport, and only when few enough are visible (i.e. zoomed in). Re-renders
@@ -1177,6 +1179,22 @@ export default function ExtractPage() {
                 }}
               />
             )}
+            {/* Row-number badges so per-row street inputs match the map rows. */}
+            {sub.streetMode === "row" &&
+              streetLevel &&
+              grid?.verts?.length > 1 &&
+              Array.from({ length: grid.rows }).map((_, i) => {
+                const a = grid.verts[i][0];
+                const b = grid.verts[i + 1][0];
+                return (
+                  <Marker
+                    key={`rowlab-${i}`}
+                    position={[(a[1] + b[1]) / 2, (a[0] + b[0]) / 2]}
+                    icon={rowBadgeIcon(i + 1)}
+                    interactive={false}
+                  />
+                );
+              })}
             <DrawTools onCreate={onCreate} />
             {lasso && <LassoSelect onFinish={selectInPolygon} />}
             <OverlayDrag onDelta={nudge} />
