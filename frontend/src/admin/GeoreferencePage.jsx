@@ -56,6 +56,7 @@ export default function GeoreferencePage() {
   const [transform, setTransform] = useState(null);
   const [showOverlay, setShowOverlay] = useState(false);
   const [opacity, setOpacity] = useState(0.6);
+  const [baseVariant, setBaseVariant] = useState("streets");
   const [msg, setMsg] = useState(null);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -353,7 +354,17 @@ export default function GeoreferencePage() {
 
         <div className="geo-pane">
           <div className="pane-label">
-            <span>Real map (OpenStreetMap)</span>
+            <select
+              className="base-select"
+              value={baseVariant}
+              onChange={(e) => setBaseVariant(e.target.value)}
+              title="Base map"
+            >
+              <option value="streets">Streets</option>
+              <option value="satellite">Satellite</option>
+              <option value="google">Google Satellite</option>
+              <option value="google-hybrid">Google Hybrid</option>
+            </select>
             <span className="pane-hint">drag to pan · Ctrl+wheel zoom · double-click to set</span>
           </div>
           <MapContainer
@@ -364,7 +375,7 @@ export default function GeoreferencePage() {
             doubleClickZoom={false}
             maxZoom={24}
           >
-            <BaseLayer language="en" />
+            <BaseLayer language="en" variant={baseVariant} />
             <MapInteractions onRegister={onMapClick} />
             <FitToPoints points={points} />
             {points.map((p, i) =>

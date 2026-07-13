@@ -80,7 +80,28 @@ function VectorBaseLayer({ language, styleUrl }) {
   return null;
 }
 
+// Google raster tiles for reference. NOTE: these direct tile endpoints are
+// unofficial and against Google's ToS — fine as an internal reference overlay,
+// but production should use the paid Google Map Tiles API with a key.
+// lyrs: s = satellite, y = hybrid (satellite + roads/labels), m = roads.
+function GoogleLayer({ lyrs }) {
+  return (
+    <TileLayer
+      key={lyrs}
+      attribution="Imagery &copy; Google"
+      url={`https://mt{s}.google.com/vt/lyrs=${lyrs}&x={x}&y={y}&z={z}`}
+      subdomains={["0", "1", "2", "3"]}
+      maxZoom={24}
+      maxNativeZoom={21}
+    />
+  );
+}
+
 export default function BaseLayer({ language = "en", variant = "streets" }) {
+  // Google imagery is raster regardless of whether the MapTiler key is set.
+  if (variant === "google") return <GoogleLayer lyrs="s" />;
+  if (variant === "google-hybrid") return <GoogleLayer lyrs="y" />;
+
   if (HAS_VECTOR) {
     // Remount on variant change so the GL style rebuilds cleanly.
     return <VectorBaseLayer key={variant} language={language} styleUrl={styleFor(variant)} />;

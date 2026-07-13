@@ -984,6 +984,8 @@ export default function ExtractPage() {
             >
               <option value="streets">Streets</option>
               <option value="satellite">Satellite</option>
+              <option value="google">Google Satellite</option>
+              <option value="google-hybrid">Google Hybrid</option>
             </select>
             <label className="pb-check" title="Show plot numbers on the map">
               <input
