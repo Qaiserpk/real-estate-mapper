@@ -6,16 +6,19 @@ import "./styles.css";
 
 import MapView from "./pages/MapView.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
+import ClaimsPage from "./pages/ClaimsPage.jsx";
 import AdminLayout from "./admin/AdminLayout.jsx";
 import SocietiesPage from "./admin/SocietiesPage.jsx";
 import SocietyDetailPage from "./admin/SocietyDetailPage.jsx";
 import GeoreferencePage from "./admin/GeoreferencePage.jsx";
 import ExtractPage from "./admin/ExtractPage.jsx";
+import ClaimsReviewPage from "./admin/ClaimsReviewPage.jsx";
 import { AuthProvider, RequireAdmin } from "./auth.jsx";
 
 const router = createBrowserRouter([
   { path: "/", element: <MapView /> },
   { path: "/login", element: <LoginPage /> },
+  { path: "/claims", element: <ClaimsPage /> },
   {
     path: "/admin",
     element: (
@@ -25,6 +28,7 @@ const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <SocietiesPage /> },
+      { path: "claims", element: <ClaimsReviewPage /> },
       { path: "societies/:id", element: <SocietyDetailPage /> },
       { path: "maps/:mapId/georeference", element: <GeoreferencePage /> },
       { path: "maps/:mapId/extract", element: <ExtractPage /> },

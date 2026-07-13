@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { MapContainer, GeoJSON } from "react-leaflet";
 import BaseLayer, { HAS_VECTOR } from "../BaseLayer.jsx";
+import { api } from "../api.js";
+import { useAuth } from "../auth.jsx";
+import ClaimModal from "../components/ClaimModal.jsx";
 import {
   colorFor,
   areaBreakdown,
@@ -16,28 +19,47 @@ const LANGUAGES = [
   { code: "native", label: "Native" },
 ];
 
+const CLAIMABLE = new Set(["unclaimed", "claim_pending"]);
+
 export default function MapView() {
+  const { user, logout } = useAuth();
   const [society, setSociety] = useState(null);
   const [plots, setPlots] = useState(null);
   const [selected, setSelected] = useState(null);
   const [error, setError] = useState(null);
   const [language, setLanguage] = useState("en");
   const [baseVariant, setBaseVariant] = useState("streets");
+  const [myClaims, setMyClaims] = useState([]);
+  const [claiming, setClaiming] = useState(null); // plot being claimed
+
+  const refreshPlots = (sid) =>
+    fetch(`/api/societies/${sid}/plots`)
+      .then((r) => r.json())
+      .then(setPlots);
 
   useEffect(() => {
     fetch("/api/societies")
       .then((r) => r.json())
       .then((list) => {
         if (!list.length) throw new Error("No societies. Run the seed script.");
-        return fetch(`/api/societies/${list[0].id}/plots`).then((r) => r.json()).then(
-          (fc) => {
-            setSociety(list[0]);
-            setPlots(fc);
-          }
-        );
+        setSociety(list[0]);
+        return refreshPlots(list[0].id);
       })
       .catch((e) => setError(e.message));
   }, []);
+
+  const loadMyClaims = () => {
+    if (!user) return setMyClaims([]);
+    api.myClaims().then(setMyClaims).catch(() => setMyClaims([]));
+  };
+  useEffect(loadMyClaims, [user]);
+
+  // plot_id -> my most recent claim on it
+  const claimByPlot = useMemo(() => {
+    const m = new Map();
+    for (const c of myClaims) if (!m.has(c.plot.id)) m.set(c.plot.id, c);
+    return m;
+  }, [myClaims]);
 
   const center = useMemo(
     () => (society ? [society.center_lat, society.center_lng] : [31.4805, 74.42]),
@@ -58,10 +80,9 @@ export default function MapView() {
       mouseout: () => layer.setStyle({ fillOpacity: 0.55 }),
     });
     const p = feature.properties;
-    layer.bindTooltip(
-      `Block ${p.block ?? "—"} · Plot ${p.plot_no ?? "—"}`,
-      { sticky: true }
-    );
+    layer.bindTooltip(`Block ${p.block ?? "—"} · Plot ${p.plot_no ?? "—"}`, {
+      sticky: true,
+    });
   };
 
   return (
@@ -94,9 +115,29 @@ export default function MapView() {
             ))}
           </select>
         )}
-        <Link to="/admin" className="admin-link">
-          Admin
-        </Link>
+        {user ? (
+          <span className="top-user">
+            <Link to="/claims" className="admin-link">
+              My claims
+            </Link>
+            {(user.is_superadmin ||
+              (user.memberships || []).some((m) => m.role === "admin")) && (
+              <Link to="/admin" className="admin-link">
+                Admin
+              </Link>
+            )}
+            <span className="top-email" title={user.email}>
+              {user.email}
+            </span>
+            <button className="top-signout" onClick={logout}>
+              Sign out
+            </button>
+          </span>
+        ) : (
+          <Link to="/login" className="admin-link">
+            Sign in
+          </Link>
+        )}
       </div>
 
       <div className="main">
@@ -119,13 +160,32 @@ export default function MapView() {
           </MapContainer>
         </div>
 
-        <SidePanel society={society} selected={selected} error={error} />
+        <SidePanel
+          society={society}
+          selected={selected}
+          error={error}
+          user={user}
+          myClaim={selected ? claimByPlot.get(selected.id) : null}
+          onClaim={() => setClaiming(selected)}
+        />
       </div>
+
+      {claiming && (
+        <ClaimModal
+          plot={claiming}
+          onClose={() => setClaiming(null)}
+          onDone={() => {
+            setClaiming(null);
+            if (society) refreshPlots(society.id);
+            loadMyClaims();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function SidePanel({ society, selected, error }) {
+function SidePanel({ society, selected, error, user, myClaim, onClaim }) {
   if (error) {
     return (
       <div className="panel">
@@ -193,9 +253,68 @@ function SidePanel({ society, selected, error }) {
         <Row k="Plot ID" v={selected.id} />
       </div>
 
+      <ClaimSection
+        selected={selected}
+        user={user}
+        myClaim={myClaim}
+        onClaim={onClaim}
+      />
+    </div>
+  );
+}
+
+function ClaimSection({ selected, user, myClaim, onClaim }) {
+  const claimable = CLAIMABLE.has(selected.status);
+
+  if (myClaim && myClaim.status === "pending") {
+    return (
+      <div className="claim-box pending">
+        <strong>Your claim is pending review</strong>
+        <p className="muted small">
+          An admin will verify your evidence. Track it under{" "}
+          <Link to="/claims">My claims</Link>.
+        </p>
+      </div>
+    );
+  }
+  if (myClaim && myClaim.status === "approved") {
+    return (
+      <div className="claim-box owned">
+        <strong>You own this plot ✓</strong>
+      </div>
+    );
+  }
+
+  if (!claimable) {
+    return (
       <p className="muted" style={{ marginTop: 16 }}>
-        Claim / offer actions arrive in later phases (auth, ownership, offers).
+        This plot is {STATUS_LABELS[selected.status] ?? selected.status} and
+        isn’t open to claims.
       </p>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="claim-box">
+        <p className="muted small">Own this plot?</p>
+        <Link to="/login" className="btn-primary">
+          Sign in to claim
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="claim-box">
+      <button className="btn-primary" onClick={onClaim}>
+        Claim this plot
+      </button>
+      {selected.status === "claim_pending" && (
+        <p className="muted small">
+          Another claim is under review; you can still submit yours.
+        </p>
+      )}
     </div>
   );
 }

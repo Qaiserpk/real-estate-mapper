@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from .models import PlotStatus, PlotType, Role
+from .models import ClaimStatus, PlotStatus, PlotType, Role
 
 
 class SocietyCreate(BaseModel):
@@ -197,6 +197,65 @@ class BulkIds(BaseModel):
 class PlotBatchCreate(BaseModel):
     plots: list[PlotCreate]
     block: BlockDef | None = None
+
+
+# ---------- Ownership claims ----------
+
+
+class ClaimCreate(BaseModel):
+    note: str | None = None
+
+
+class ClaimEvidenceOut(BaseModel):
+    id: int
+    original_name: str | None
+    content_type: str | None
+    uploaded_at: datetime | None
+
+    class Config:
+        from_attributes = True
+
+
+class ClaimantOut(BaseModel):
+    id: int
+    email: EmailStr
+    full_name: str | None
+    phone: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class ClaimPlotRef(BaseModel):
+    id: int
+    block: str | None = None
+    street: str | None = None
+    plot_no: str | None = None
+    status: PlotStatus
+
+    class Config:
+        from_attributes = True
+
+
+class ClaimOut(BaseModel):
+    id: int
+    society_id: int
+    status: ClaimStatus
+    note: str | None
+    review_note: str | None
+    created_at: datetime | None
+    reviewed_at: datetime | None
+    plot: ClaimPlotRef
+    claimant: ClaimantOut
+    evidence: list[ClaimEvidenceOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+class ClaimReview(BaseModel):
+    decision: str  # "approve" | "reject"
+    note: str | None = None
 
 
 class PlotProperties(BaseModel):

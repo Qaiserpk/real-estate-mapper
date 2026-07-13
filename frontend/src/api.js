@@ -108,6 +108,34 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
     }),
+  // ---- ownership claims ----
+  createClaim: (plotId, body) =>
+    req(`/api/plots/${plotId}/claims`, { method: "POST", ...jsonBody(body) }),
+  uploadEvidence: (claimId, file) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req(`/api/claims/${claimId}/evidence`, { method: "POST", body: fd });
+  },
+  myClaims: () => req("/api/me/claims"),
+  getClaim: (claimId) => req(`/api/claims/${claimId}`),
+  withdrawClaim: (claimId) =>
+    req(`/api/claims/${claimId}/withdraw`, { method: "POST" }),
+  listSocietyClaims: (societyId, status) =>
+    req(
+      `/api/societies/${societyId}/claims${status ? `?status=${status}` : ""}`
+    ),
+  reviewClaim: (claimId, body) =>
+    req(`/api/claims/${claimId}/review`, { method: "POST", ...jsonBody(body) }),
+  // Private evidence is auth-gated; fetch as a blob and hand back an object URL.
+  evidenceBlobUrl: async (claimId, evId) => {
+    const token = getToken();
+    const res = await fetch(`/api/claims/${claimId}/evidence/${evId}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error("Cannot load evidence");
+    return URL.createObjectURL(await res.blob());
+  },
+
   deletePlot: (plotId) => req(`/api/plots/${plotId}`, { method: "DELETE" }),
   deletePlotGroup: (groupId) => req(`/api/plots/group/${groupId}`, { method: "DELETE" }),
   resetPlots: (mapId) => req(`/api/maps/${mapId}/plots`, { method: "DELETE" }),

@@ -21,3 +21,5 @@ Thumbs.db
 
 # Uploads (local dev)
 backend/uploads/
+# Private claim evidence (sensitive; never commit)
+backend/private/

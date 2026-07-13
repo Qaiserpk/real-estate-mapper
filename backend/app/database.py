@@ -46,6 +46,7 @@ def init_db():
         conn.execute(text("ALTER TABLE plots ADD COLUMN IF NOT EXISTS cell_col integer"))
         conn.execute(text("ALTER TABLE blocks ADD COLUMN IF NOT EXISTS verts json"))
         conn.execute(text("ALTER TABLE plots ADD COLUMN IF NOT EXISTS street varchar"))
+        conn.execute(text("ALTER TABLE plots ADD COLUMN IF NOT EXISTS owner_id integer"))
         # Existing rows (e.g. seeded plots) predate the gate -> treat as confirmed.
         conn.execute(text("UPDATE plots SET confirmed = true WHERE confirmed IS NULL"))
         conn.commit()

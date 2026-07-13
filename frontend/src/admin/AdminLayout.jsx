@@ -19,6 +19,7 @@ export default function AdminLayout() {
         </div>
         <nav>
           <Link to="/admin">Societies</Link>
+          <Link to="/admin/claims">Claims</Link>
           <Link to="/">View map ↗</Link>
         </nav>
         <div className="admin-user">

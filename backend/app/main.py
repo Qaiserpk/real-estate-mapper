@@ -5,6 +5,7 @@ import uuid
 import numpy as np
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from geoalchemy2 import Geography
 from geoalchemy2.functions import ST_AsGeoJSON
@@ -18,18 +19,38 @@ from .extraction import detect_plots
 
 from .auth import (
     get_current_user,
+    is_society_admin,
     require_admin,
     require_superadmin,
 )
 from .config import settings
 from .database import get_db, init_db
-from .models import Block, MapSource, Membership, Plot, PlotStatus, PlotType, Role, Society, User
+from .models import (
+    Block,
+    Claim,
+    ClaimEvidence,
+    ClaimStatus,
+    MapSource,
+    Membership,
+    Plot,
+    PlotStatus,
+    PlotType,
+    Role,
+    Society,
+    User,
+)
 from .schemas import (
     AutoExtractParams,
     BlockOut,
     BlockReshape,
     BulkIds,
     BulkPlotUpdate,
+    ClaimantOut,
+    ClaimCreate,
+    ClaimEvidenceOut,
+    ClaimOut,
+    ClaimPlotRef,
+    ClaimReview,
     GeoreferenceIn,
     LoginIn,
     MapSourceOut,
@@ -62,6 +83,7 @@ app.add_middleware(
 )
 
 os.makedirs(settings.upload_dir, exist_ok=True)
+os.makedirs(settings.evidence_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")
 
 
@@ -697,3 +719,266 @@ def confirm_map(
     m.status = "confirmed"
     db.commit()
     return {"confirmed_plots": count, "map_status": m.status}
+
+
+# ---------- Ownership claims ----------
+
+ALLOWED_EVIDENCE_TYPES = {"image/png", "image/jpeg", "image/jpg", "application/pdf"}
+
+
+def claim_to_out(c: Claim) -> ClaimOut:
+    return ClaimOut(
+        id=c.id,
+        society_id=c.society_id,
+        status=c.status,
+        note=c.note,
+        review_note=c.review_note,
+        created_at=c.created_at,
+        reviewed_at=c.reviewed_at,
+        plot=ClaimPlotRef.model_validate(c.plot, from_attributes=True),
+        claimant=ClaimantOut.model_validate(c.user, from_attributes=True),
+        evidence=[
+            ClaimEvidenceOut.model_validate(e, from_attributes=True) for e in c.evidence
+        ],
+    )
+
+
+def _recompute_plot_status(db: Session, plot: Plot):
+    """Reflect pending claims in the plot status (unless already owned/sold)."""
+    if plot.owner_id is not None or plot.status in (PlotStatus.sold,):
+        return
+    has_pending = (
+        db.query(Claim)
+        .filter(Claim.plot_id == plot.id, Claim.status == ClaimStatus.pending)
+        .first()
+        is not None
+    )
+    if plot.status in (PlotStatus.unclaimed, PlotStatus.claim_pending):
+        plot.status = (
+            PlotStatus.claim_pending if has_pending else PlotStatus.unclaimed
+        )
+
+
+def _get_claim_for_access(claim_id: int, user: User, db: Session) -> Claim:
+    claim = db.get(Claim, claim_id)
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim.user_id != user.id and not is_society_admin(db, user, claim.society_id):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    return claim
+
+
+@app.post("/api/plots/{plot_id}/claims", response_model=ClaimOut, status_code=201)
+def create_claim(
+    plot_id: int,
+    payload: ClaimCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Any signed-in user claims ownership of a confirmed plot."""
+    plot = db.get(Plot, plot_id)
+    if not plot or not plot.confirmed:
+        raise HTTPException(status_code=404, detail="Plot not found")
+    if plot.owner_id is not None or plot.status in (PlotStatus.owned, PlotStatus.sold):
+        raise HTTPException(status_code=409, detail="Plot is already owned")
+    existing = (
+        db.query(Claim)
+        .filter(
+            Claim.plot_id == plot_id,
+            Claim.user_id == user.id,
+            Claim.status == ClaimStatus.pending,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409, detail="You already have a pending claim on this plot"
+        )
+    claim = Claim(
+        plot_id=plot_id,
+        society_id=plot.society_id,
+        user_id=user.id,
+        note=payload.note,
+        status=ClaimStatus.pending,
+    )
+    db.add(claim)
+    if plot.status == PlotStatus.unclaimed:
+        plot.status = PlotStatus.claim_pending
+    db.commit()
+    db.refresh(claim)
+    return claim_to_out(claim)
+
+
+@app.post("/api/claims/{claim_id}/evidence", response_model=ClaimOut, status_code=201)
+def upload_evidence(
+    claim_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Claimant attaches a supporting document/image to their pending claim."""
+    claim = db.get(Claim, claim_id)
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your claim")
+    if claim.status != ClaimStatus.pending:
+        raise HTTPException(status_code=409, detail="Claim is no longer pending")
+    if file.content_type not in ALLOWED_EVIDENCE_TYPES:
+        raise HTTPException(
+            status_code=400, detail="Only PNG/JPEG images or PDF documents are allowed"
+        )
+
+    ext = os.path.splitext(file.filename or "")[1].lower() or ".bin"
+    stored = f"{uuid.uuid4().hex}{ext}"
+    path = os.path.join(settings.evidence_dir, stored)
+    with open(path, "wb") as f:
+        f.write(file.file.read())
+
+    db.add(
+        ClaimEvidence(
+            claim_id=claim.id,
+            filename=stored,
+            original_name=file.filename,
+            content_type=file.content_type,
+        )
+    )
+    db.commit()
+    db.refresh(claim)
+    return claim_to_out(claim)
+
+
+@app.get("/api/me/claims", response_model=list[ClaimOut])
+def my_claims(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    claims = (
+        db.query(Claim)
+        .filter(Claim.user_id == user.id)
+        .order_by(Claim.id.desc())
+        .all()
+    )
+    return [claim_to_out(c) for c in claims]
+
+
+@app.get("/api/claims/{claim_id}", response_model=ClaimOut)
+def get_claim(
+    claim_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return claim_to_out(_get_claim_for_access(claim_id, user, db))
+
+
+@app.get("/api/claims/{claim_id}/evidence/{evidence_id}")
+def download_evidence(
+    claim_id: int,
+    evidence_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Serve a private evidence file to the claimant or a society admin only."""
+    claim = _get_claim_for_access(claim_id, user, db)
+    ev = db.get(ClaimEvidence, evidence_id)
+    if not ev or ev.claim_id != claim.id:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    path = os.path.join(settings.evidence_dir, ev.filename)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="File missing")
+    return FileResponse(
+        path, media_type=ev.content_type or "application/octet-stream",
+        filename=ev.original_name or ev.filename,
+    )
+
+
+@app.get("/api/societies/{society_id}/claims", response_model=list[ClaimOut])
+def list_society_claims(
+    society_id: int,
+    status: ClaimStatus | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Admin: claims for a society, newest first, optionally filtered by status."""
+    if not is_society_admin(db, user, society_id):
+        raise HTTPException(status_code=403, detail="Requires society admin")
+    q = db.query(Claim).filter(Claim.society_id == society_id)
+    if status is not None:
+        q = q.filter(Claim.status == status)
+    return [claim_to_out(c) for c in q.order_by(Claim.id.desc()).all()]
+
+
+@app.post("/api/claims/{claim_id}/review", response_model=ClaimOut)
+def review_claim(
+    claim_id: int,
+    payload: ClaimReview,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Admin approves or rejects a pending claim. Approving transfers ownership
+    and auto-rejects other pending claims on the same plot."""
+    claim = db.get(Claim, claim_id)
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if not is_society_admin(db, user, claim.society_id):
+        raise HTTPException(status_code=403, detail="Requires society admin")
+    if claim.status != ClaimStatus.pending:
+        raise HTTPException(status_code=409, detail="Claim already reviewed")
+
+    decision = payload.decision.lower()
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision must be approve or reject")
+
+    plot = db.get(Plot, claim.plot_id)
+    claim.reviewed_by = user.id
+    claim.reviewed_at = func.now()
+    claim.review_note = payload.note
+
+    if decision == "approve":
+        if plot.owner_id is not None:
+            raise HTTPException(status_code=409, detail="Plot is already owned")
+        claim.status = ClaimStatus.approved
+        plot.owner_id = claim.user_id
+        plot.status = PlotStatus.owned
+        # Auto-reject competing pending claims on the same plot.
+        others = (
+            db.query(Claim)
+            .filter(
+                Claim.plot_id == plot.id,
+                Claim.id != claim.id,
+                Claim.status == ClaimStatus.pending,
+            )
+            .all()
+        )
+        for o in others:
+            o.status = ClaimStatus.rejected
+            o.reviewed_by = user.id
+            o.reviewed_at = func.now()
+            o.review_note = "Another claim on this plot was approved"
+    else:
+        claim.status = ClaimStatus.rejected
+        _recompute_plot_status(db, plot)
+
+    db.commit()
+    db.refresh(claim)
+    return claim_to_out(claim)
+
+
+@app.post("/api/claims/{claim_id}/withdraw", response_model=ClaimOut)
+def withdraw_claim(
+    claim_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    claim = db.get(Claim, claim_id)
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your claim")
+    if claim.status != ClaimStatus.pending:
+        raise HTTPException(status_code=409, detail="Claim is no longer pending")
+    claim.status = ClaimStatus.withdrawn
+    plot = db.get(Plot, claim.plot_id)
+    _recompute_plot_status(db, plot)
+    db.commit()
+    db.refresh(claim)
+    return claim_to_out(claim)

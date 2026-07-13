@@ -36,6 +36,13 @@ class PlotType(str, enum.Enum):
     other = "other"
 
 
+class ClaimStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    withdrawn = "withdrawn"
+
+
 class Role(str, enum.Enum):
     """A user's role within a single society (society-scoped)."""
 
@@ -168,7 +175,54 @@ class Plot(Base):
     cell_row = Column(Integer, nullable=True)  # position within its block grid
     cell_col = Column(Integer, nullable=True)
 
+    # Set when an ownership claim is approved.
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
     # WGS84 polygon of the plot boundary.
     geom = Column(Geometry(geometry_type="POLYGON", srid=4326), nullable=False)
 
     society = relationship("Society", back_populates="plots")
+    owner = relationship("User", foreign_keys=[owner_id])
+
+
+class Claim(Base):
+    """A user's request to be recognised as the owner of a plot, with evidence.
+    Admin validates (spec §: eyeball) → plot becomes owned."""
+
+    __tablename__ = "claims"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plot_id = Column(Integer, ForeignKey("plots.id"), nullable=False, index=True)
+    society_id = Column(Integer, ForeignKey("societies.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    status = Column(Enum(ClaimStatus), default=ClaimStatus.pending, nullable=False)
+    note = Column(String, nullable=True)  # claimant's message
+
+    review_note = Column(String, nullable=True)  # admin's decision note
+    reviewed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User", foreign_keys=[user_id])
+    reviewer = relationship("User", foreign_keys=[reviewed_by])
+    plot = relationship("Plot")
+    evidence = relationship(
+        "ClaimEvidence", back_populates="claim", cascade="all, delete-orphan"
+    )
+
+
+class ClaimEvidence(Base):
+    """An uploaded document/image supporting a claim. Stored outside the public
+    uploads mount and served only to the claimant or an admin."""
+
+    __tablename__ = "claim_evidence"
+
+    id = Column(Integer, primary_key=True, index=True)
+    claim_id = Column(Integer, ForeignKey("claims.id"), nullable=False, index=True)
+    filename = Column(String, nullable=False)  # stored file on disk (private)
+    original_name = Column(String, nullable=True)
+    content_type = Column(String, nullable=True)
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    claim = relationship("Claim", back_populates="evidence")

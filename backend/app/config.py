@@ -5,6 +5,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://propmap:propmap@localhost:5432/propmap"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     upload_dir: str = "/app/uploads"
+    # Sensitive claim evidence lives here — NOT under the public /uploads mount.
+    evidence_dir: str = "/app/private/evidence"
 
     # Auth. secret_key MUST be overridden in production (env: SECRET_KEY).
     secret_key: str = "dev-insecure-change-me"
