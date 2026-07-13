@@ -582,10 +582,15 @@ export default function ExtractPage() {
   // row and letters the columns (1A,1B,2A,2B…); "row" numbers columns and letters
   // the rows. Always returns a string (plot numbers can be alphanumeric).
   const plotNumber = (row, col, rows, cols) => {
-    const start = Math.floor(Number(sub.startNo) || 1);
-    const colInc = Math.floor(Number(sub.colInc) || 1);
+    // Parse an int, keeping an explicit 0 (so "+/row 0" means same number per row).
+    const intOr = (v, dflt) => {
+      const n = Math.floor(Number(v));
+      return Number.isNaN(n) ? dflt : n;
+    };
+    const start = intOr(sub.startNo, 1);
+    const colInc = intOr(sub.colInc, 1);
     const rowIncRaw = String(sub.rowInc).trim();
-    const rowInc = rowIncRaw === "" ? cols * colInc : Math.floor(Number(rowIncRaw) || 1);
+    const rowInc = rowIncRaw === "" ? cols * colInc : intOr(rowIncRaw, 1);
     const r = sub.revV ? rows - 1 - row : row;
     const c = sub.revH ? cols - 1 - col : col;
     // Letter modes: a number that steps by 1 in one direction, a letter (from the
