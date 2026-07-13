@@ -8,7 +8,7 @@ import MapView from "./pages/MapView.jsx";
 import LoginPage from "./pages/LoginPage.jsx";
 import ClaimsPage from "./pages/ClaimsPage.jsx";
 import DealsPage from "./pages/DealsPage.jsx";
-import AdminLayout from "./admin/AdminLayout.jsx";
+import AppLayout from "./components/AppLayout.jsx";
 import SocietiesPage from "./admin/SocietiesPage.jsx";
 import SocietyDetailPage from "./admin/SocietyDetailPage.jsx";
 import GeoreferencePage from "./admin/GeoreferencePage.jsx";
@@ -20,13 +20,18 @@ import { AuthProvider, RequireAdmin } from "./auth.jsx";
 const router = createBrowserRouter([
   { path: "/", element: <MapView /> },
   { path: "/login", element: <LoginPage /> },
-  { path: "/claims", element: <ClaimsPage /> },
-  { path: "/deals", element: <DealsPage /> },
+  {
+    element: <AppLayout />,
+    children: [
+      { path: "/claims", element: <ClaimsPage /> },
+      { path: "/deals", element: <DealsPage /> },
+    ],
+  },
   {
     path: "/admin",
     element: (
       <RequireAdmin>
-        <AdminLayout />
+        <AppLayout />
       </RequireAdmin>
     ),
     children: [

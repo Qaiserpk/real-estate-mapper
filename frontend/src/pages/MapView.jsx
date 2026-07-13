@@ -4,6 +4,7 @@ import { MapContainer, GeoJSON } from "react-leaflet";
 import BaseLayer, { HAS_VECTOR } from "../BaseLayer.jsx";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
+import AppHeader from "../components/AppHeader.jsx";
 import ClaimModal from "../components/ClaimModal.jsx";
 import ListingModal from "../components/ListingModal.jsx";
 import OfferModal from "../components/OfferModal.jsx";
@@ -25,7 +26,7 @@ const LANGUAGES = [
 const CLAIMABLE = new Set(["unclaimed", "claim_pending"]);
 
 export default function MapView() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [society, setSociety] = useState(null);
   const [plots, setPlots] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -115,9 +116,8 @@ export default function MapView() {
 
   return (
     <div className="app">
-      <div className="topbar">
-        <h1>Property Map Platform</h1>
-        <span className="society">
+      <AppHeader>
+        <span className="map-society">
           {society ? `${society.name} — ${society.region ?? ""}` : "Loading…"}
         </span>
         <select
@@ -143,33 +143,7 @@ export default function MapView() {
             ))}
           </select>
         )}
-        {user ? (
-          <span className="top-user">
-            <Link to="/claims" className="admin-link">
-              My claims
-            </Link>
-            <Link to="/deals" className="admin-link">
-              My deals
-            </Link>
-            {(user.is_superadmin ||
-              (user.memberships || []).some((m) => m.role === "admin")) && (
-              <Link to="/admin" className="admin-link">
-                Admin
-              </Link>
-            )}
-            <span className="top-email" title={user.email}>
-              {user.email}
-            </span>
-            <button className="top-signout" onClick={logout}>
-              Sign out
-            </button>
-          </span>
-        ) : (
-          <Link to="/login" className="admin-link">
-            Sign in
-          </Link>
-        )}
-      </div>
+      </AppHeader>
 
       <div className="main">
         <div className="map">
