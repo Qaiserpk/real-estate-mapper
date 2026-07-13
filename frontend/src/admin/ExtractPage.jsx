@@ -19,6 +19,17 @@ import {
 
 const ringToGeometry = (cs) => ({ type: "Polygon", coordinates: [[...cs, cs[0]]] });
 
+// 0 -> A, 1 -> B, … 25 -> Z, 26 -> AA (Excel-style), for alphanumeric numbering.
+function toLetters(n) {
+  let s = "";
+  n = Math.max(0, Math.floor(n));
+  do {
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return s;
+}
+
 // A drawn shape is subdividable if its ring is a single quad (4 unique corners).
 function quadCorners(geometry) {
   if (!geometry || geometry.type !== "Polygon") return null;
@@ -495,6 +506,7 @@ export default function ExtractPage() {
     rowInc: "", // per row step (down); blank = auto-continue (cols * colInc)
     revH: false, // start-corner horizontal (right -> left)
     revV: false, // start-corner vertical (bottom -> top)
+    letters: "off", // 'off' | 'col' (letter per column) | 'row' (letter per row)
     plot_type: "residential",
     split: "grid", // 'grid' (follow edges) | 'radial' (equal-area sector, for a curved edge)
   });
@@ -612,8 +624,11 @@ export default function ExtractPage() {
     return { rows, cols, verts, cells: cellsFromGrid(verts) };
   }, [corners, edgeThrough, hasCurve, sub]);
 
-  // Plot number = start + (col step) * colInc + (row step) * rowInc, from the
-  // chosen start corner. Blank rowInc auto-continues consecutively (cols*colInc).
+  // Plot number, from the chosen start corner. Numeric mode:
+  //   start + (col step)*colInc + (row step)*rowInc (blank rowInc = cols*colInc).
+  // Letter modes append an incrementing letter (A,B,C…): "col" keeps a number per
+  // row and letters the columns (1A,1B,2A,2B…); "row" numbers columns and letters
+  // the rows. Always returns a string (plot numbers can be alphanumeric).
   const plotNumber = (row, col, rows, cols) => {
     const start = Math.floor(Number(sub.startNo) || 1);
     const colInc = Math.floor(Number(sub.colInc) || 1);
@@ -621,7 +636,10 @@ export default function ExtractPage() {
     const rowInc = rowIncRaw === "" ? cols * colInc : Math.floor(Number(rowIncRaw) || 1);
     const r = sub.revV ? rows - 1 - row : row;
     const c = sub.revH ? cols - 1 - col : col;
-    return start + c * colInc + r * rowInc;
+    // Letter modes: a number that steps by 1 in one direction, a letter in the other.
+    if (sub.letters === "col") return `${start + r}${toLetters(c)}`; // 1A 1B / 2A 2B
+    if (sub.letters === "row") return `${start + c}${toLetters(r)}`; // 1A 1B down / 2A across
+    return String(start + c * colInc + r * rowInc);
   };
 
   const previewFC = useMemo(() => {
@@ -640,7 +658,7 @@ export default function ExtractPage() {
   // Signature so the preview layer re-renders on any change that alters the cells
   // or their labels — numbering, split style, block corners, and edge curves.
   // (react-leaflet GeoJSON only re-renders when its key changes.)
-  const numSig = `${sub.startNo}-${sub.colInc}-${sub.rowInc}-${sub.revH}-${sub.revV}`;
+  const numSig = `${sub.startNo}-${sub.colInc}-${sub.rowInc}-${sub.revH}-${sub.revV}-${sub.letters}`;
   const geomSig = useMemo(() => {
     const cs = corners ? corners.map((c) => c.map((n) => n.toFixed(6)).join()).join("|") : "";
     const es = edgeThrough.map((t) => (t ? t.map((n) => n.toFixed(6)).join() : "·")).join("|");
@@ -1525,6 +1543,7 @@ export default function ExtractPage() {
                         {String(sub.rowInc).trim() === ""
                           ? "consecutive"
                           : `+${Math.floor(Number(sub.rowInc) || 1)}/row`}
+                        {sub.letters !== "off" && ` · A/${sub.letters}`}
                       </span>
                     </div>
                     <div className="num-grid">
@@ -1575,6 +1594,14 @@ export default function ExtractPage() {
                         </div>
                       </div>
                     </div>
+                    <label className="num-letters" title="Append an incrementing letter (A, B, C…) to make numbers alphanumeric, e.g. 1A 1B">
+                      <span>Letters</span>
+                      <select value={sub.letters} onChange={setSubF("letters")}>
+                        <option value="off">Off — numeric</option>
+                        <option value="col">Letters across (1A 1B 1C…)</option>
+                        <option value="row">Letters down (1A 1B 1C…)</option>
+                      </select>
+                    </label>
                     <p className="hint-line">
                       Blank +/row continues consecutively. Odd/even per row: +/col 2, +/row 1.
                     </p>
@@ -1649,9 +1676,14 @@ export default function ExtractPage() {
                         const nums = grid.cells.map((c) =>
                           plotNumber(c.row, c.col, grid.rows, grid.cols)
                         );
+                        // Numeric range when all numeric, else first → last in order.
+                        const asNums = nums.map(Number);
+                        const numeric = asNums.every((n) => !Number.isNaN(n));
+                        const lo = numeric ? Math.min(...asNums) : nums[0];
+                        const hi = numeric ? Math.max(...asNums) : nums[nums.length - 1];
                         return (
                           <span className="muted small">
-                            #{Math.min(...nums)} → #{Math.max(...nums)}
+                            #{lo} → #{hi}
                           </span>
                         );
                       })()}

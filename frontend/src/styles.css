@@ -1930,3 +1930,21 @@ textarea::placeholder {
   display: flex;
   gap: 6px;
 }
+
+.num-letters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #475569;
+}
+.num-letters select {
+  flex: 1;
+  max-width: 220px;
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
+}
