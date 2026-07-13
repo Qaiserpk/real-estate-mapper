@@ -1563,3 +1563,117 @@ body,
   color: #0f172a;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
+
+/* ---------- Marketplace ---------- */
+.price-line {
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.asking {
+  margin: 0;
+  font-size: 14px;
+  color: #334155;
+}
+.modal textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.deal-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+  margin: 4px 0 6px;
+  font-size: 14px;
+}
+.deal-figures .cur {
+  font-weight: 600;
+}
+
+/* status pills for market entities */
+.pill.offer-pending,
+.pill.listing-agreed,
+.pill.agreement-pending {
+  background: #fef3c7;
+  color: #92400e;
+}
+.pill.offer-accepted,
+.pill.listing-active,
+.pill.agreement-approved {
+  background: #dcfce7;
+  color: #166534;
+}
+.pill.offer-rejected,
+.pill.offer-withdrawn,
+.pill.listing-withdrawn,
+.pill.agreement-rejected {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.pill.listing-sold {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.offers-sub {
+  margin-top: 8px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.offer-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13px;
+}
+.btn-primary.sm {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+button.btn-link {
+  background: none;
+  cursor: pointer;
+}
+button.btn-link:disabled {
+  color: #94a3b8;
+  border-color: #e2e8f0;
+  cursor: not-allowed;
+}
+
+.contact-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+.contact-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  min-width: 180px;
+  background: #f8fafc;
+}
+.contact-card .role {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+.contact-card .name {
+  font-weight: 700;
+  margin: 2px 0;
+}
+.contact-card a {
+  color: #2563eb;
+  text-decoration: none;
+}

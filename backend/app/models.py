@@ -43,6 +43,31 @@ class ClaimStatus(str, enum.Enum):
     withdrawn = "withdrawn"
 
 
+class ListingStatus(str, enum.Enum):
+    active = "active"      # open for offers
+    agreed = "agreed"      # an offer accepted, awaiting admin approval
+    sold = "sold"
+    withdrawn = "withdrawn"
+
+
+class OfferStatus(str, enum.Enum):
+    pending = "pending"      # a proposal is on the table, awaiting the other party
+    accepted = "accepted"
+    rejected = "rejected"
+    withdrawn = "withdrawn"
+
+
+class Party(str, enum.Enum):
+    buyer = "buyer"
+    owner = "owner"
+
+
+class AgreementStatus(str, enum.Enum):
+    pending = "pending"      # awaiting admin approval
+    approved = "approved"
+    rejected = "rejected"
+
+
 class Role(str, enum.Enum):
     """A user's role within a single society (society-scoped)."""
 
@@ -226,3 +251,85 @@ class ClaimEvidence(Base):
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
 
     claim = relationship("Claim", back_populates="evidence")
+
+
+class Listing(Base):
+    """An owner offers their plot for sale with an asking price and a private
+    floor (minimum acceptable) price."""
+
+    __tablename__ = "listings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plot_id = Column(Integer, ForeignKey("plots.id"), nullable=False, index=True)
+    society_id = Column(Integer, ForeignKey("societies.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    asking_price = Column(Float, nullable=False)  # PKR, shown publicly
+    floor_price = Column(Float, nullable=True)  # PKR, private minimum
+    description = Column(String, nullable=True)
+    status = Column(Enum(ListingStatus), default=ListingStatus.active, nullable=False)
+    # Max number of counter-offers per negotiation; seeded from the society and
+    # resettable by the owner.
+    counter_limit = Column(Integer, nullable=False, default=3)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    plot = relationship("Plot")
+    owner = relationship("User")
+    offers = relationship(
+        "Offer", back_populates="listing", cascade="all, delete-orphan"
+    )
+
+
+class Offer(Base):
+    """A negotiation thread between a buyer and a listing. The current proposal
+    sits on `amount`; `proposed_by` says whose turn it is to respond."""
+
+    __tablename__ = "offers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False, index=True)
+    plot_id = Column(Integer, ForeignKey("plots.id"), nullable=False, index=True)
+    society_id = Column(Integer, ForeignKey("societies.id"), nullable=False, index=True)
+    buyer_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    amount = Column(Float, nullable=False)  # current proposed price (PKR)
+    message = Column(String, nullable=True)
+    proposed_by = Column(Enum(Party), nullable=False, default=Party.buyer)
+    status = Column(Enum(OfferStatus), default=OfferStatus.pending, nullable=False)
+    counters_used = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    buyer = relationship("User")
+    listing = relationship("Listing", back_populates="offers")
+
+
+class Agreement(Base):
+    """Created when an offer is accepted; contact details are revealed to both
+    parties once an admin approves it."""
+
+    __tablename__ = "agreements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    offer_id = Column(Integer, ForeignKey("offers.id"), nullable=False, index=True)
+    listing_id = Column(Integer, ForeignKey("listings.id"), nullable=False, index=True)
+    plot_id = Column(Integer, ForeignKey("plots.id"), nullable=False, index=True)
+    society_id = Column(Integer, ForeignKey("societies.id"), nullable=False, index=True)
+    buyer_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    amount = Column(Float, nullable=False)
+    status = Column(Enum(AgreementStatus), default=AgreementStatus.pending, nullable=False)
+    admin_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    review_note = Column(String, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at = Column(DateTime(timezone=True), nullable=True)
+
+    offer = relationship("Offer")
+    plot = relationship("Plot")
+    buyer = relationship("User", foreign_keys=[buyer_id])
+    owner = relationship("User", foreign_keys=[owner_id])

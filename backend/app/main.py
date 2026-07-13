@@ -26,12 +26,19 @@ from .auth import (
 from .config import settings
 from .database import get_db, init_db
 from .models import (
+    Agreement,
+    AgreementStatus,
     Block,
     Claim,
     ClaimEvidence,
     ClaimStatus,
+    Listing,
+    ListingStatus,
     MapSource,
     Membership,
+    Offer,
+    OfferStatus,
+    Party,
     Plot,
     PlotStatus,
     PlotType,
@@ -45,18 +52,30 @@ from .schemas import (
     BlockReshape,
     BulkIds,
     BulkPlotUpdate,
+    AgreementOut,
+    AgreementReview,
     ClaimantOut,
     ClaimCreate,
     ClaimEvidenceOut,
     ClaimOut,
     ClaimPlotRef,
     ClaimReview,
+    ContactCard,
+    ContactReveal,
     GeoreferenceIn,
+    ListingCreate,
+    ListingOut,
+    ListingPublicOut,
+    ListingUpdate,
     LoginIn,
     MapSourceOut,
     MembershipCreate,
     MembershipOut,
     MeOut,
+    OfferAmount,
+    OfferCreate,
+    OfferOut,
+    OfferParty,
     PlotBatchCreate,
     PlotCreate,
     PlotProperties,
@@ -982,3 +1001,497 @@ def withdraw_claim(
     db.commit()
     db.refresh(claim)
     return claim_to_out(claim)
+
+
+# ---------- Marketplace: listings ----------
+
+
+def listing_to_out(listing: Listing) -> ListingOut:
+    out = ListingOut.model_validate(listing, from_attributes=True)
+    out.plot = ClaimPlotRef.model_validate(listing.plot, from_attributes=True)
+    return out
+
+
+def offer_to_out(o: Offer) -> OfferOut:
+    return OfferOut(
+        id=o.id,
+        listing_id=o.listing_id,
+        plot=ClaimPlotRef.model_validate(o.listing.plot, from_attributes=True),
+        asking_price=o.listing.asking_price,
+        amount=o.amount,
+        message=o.message,
+        proposed_by=o.proposed_by,
+        status=o.status,
+        counters_used=o.counters_used,
+        counter_limit=o.listing.counter_limit,
+        buyer=OfferParty.model_validate(o.buyer, from_attributes=True),
+        created_at=o.created_at,
+        updated_at=o.updated_at,
+    )
+
+
+def agreement_to_out(a: Agreement) -> AgreementOut:
+    return AgreementOut(
+        id=a.id,
+        plot=ClaimPlotRef.model_validate(a.plot, from_attributes=True),
+        society_id=a.society_id,
+        amount=a.amount,
+        status=a.status,
+        review_note=a.review_note,
+        created_at=a.created_at,
+        reviewed_at=a.reviewed_at,
+        buyer=OfferParty.model_validate(a.buyer, from_attributes=True),
+        owner=OfferParty.model_validate(a.owner, from_attributes=True),
+    )
+
+
+def _active_listing(db: Session, plot_id: int) -> Listing | None:
+    return (
+        db.query(Listing)
+        .filter(
+            Listing.plot_id == plot_id,
+            Listing.status.in_([ListingStatus.active, ListingStatus.agreed]),
+        )
+        .order_by(Listing.id.desc())
+        .first()
+    )
+
+
+@app.post("/api/plots/{plot_id}/listing", response_model=ListingOut, status_code=201)
+def create_listing(
+    plot_id: int,
+    payload: ListingCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The plot owner lists it for sale."""
+    plot = db.get(Plot, plot_id)
+    if not plot or not plot.confirmed:
+        raise HTTPException(status_code=404, detail="Plot not found")
+    if plot.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the owner can list this plot")
+    if _active_listing(db, plot_id):
+        raise HTTPException(status_code=409, detail="Plot already has an active listing")
+    if payload.floor_price and payload.floor_price > payload.asking_price:
+        raise HTTPException(
+            status_code=400, detail="Floor price cannot exceed the asking price"
+        )
+    society = db.get(Society, plot.society_id)
+    listing = Listing(
+        plot_id=plot_id,
+        society_id=plot.society_id,
+        owner_id=user.id,
+        asking_price=payload.asking_price,
+        floor_price=payload.floor_price,
+        description=payload.description,
+        counter_limit=society.default_counter_limit if society else 3,
+        status=ListingStatus.active,
+    )
+    db.add(listing)
+    plot.status = PlotStatus.listed
+    db.commit()
+    db.refresh(listing)
+    return listing_to_out(listing)
+
+
+@app.get("/api/plots/{plot_id}/listing", response_model=ListingPublicOut)
+def get_plot_listing(plot_id: int, db: Session = Depends(get_db)):
+    """Public: the active listing for a plot (no floor price)."""
+    listing = _active_listing(db, plot_id)
+    if not listing:
+        raise HTTPException(status_code=404, detail="No active listing")
+    return ListingPublicOut.model_validate(listing, from_attributes=True)
+
+
+@app.get("/api/me/plots", response_model=list[ClaimPlotRef])
+def my_plots(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Plots the current user owns (approved claim / purchased)."""
+    return (
+        db.query(Plot)
+        .filter(Plot.owner_id == user.id)
+        .order_by(Plot.id)
+        .all()
+    )
+
+
+@app.get("/api/me/listings", response_model=list[ListingOut])
+def my_listings(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    listings = (
+        db.query(Listing)
+        .filter(Listing.owner_id == user.id)
+        .order_by(Listing.id.desc())
+        .all()
+    )
+    return [listing_to_out(x) for x in listings]
+
+
+def _owned_listing(db: Session, listing_id: int, user: User) -> Listing:
+    listing = db.get(Listing, listing_id)
+    if not listing:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if listing.owner_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your listing")
+    return listing
+
+
+@app.patch("/api/listings/{listing_id}", response_model=ListingOut)
+def update_listing(
+    listing_id: int,
+    payload: ListingUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    listing = _owned_listing(db, listing_id, user)
+    if listing.status != ListingStatus.active:
+        raise HTTPException(status_code=409, detail="Listing is not active")
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
+        setattr(listing, field, value)
+    if listing.floor_price and listing.floor_price > listing.asking_price:
+        raise HTTPException(
+            status_code=400, detail="Floor price cannot exceed the asking price"
+        )
+    db.commit()
+    db.refresh(listing)
+    return listing_to_out(listing)
+
+
+@app.post("/api/listings/{listing_id}/withdraw", response_model=ListingOut)
+def withdraw_listing(
+    listing_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    listing = _owned_listing(db, listing_id, user)
+    if listing.status == ListingStatus.sold:
+        raise HTTPException(status_code=409, detail="Listing already sold")
+    listing.status = ListingStatus.withdrawn
+    for o in db.query(Offer).filter(
+        Offer.listing_id == listing.id, Offer.status == OfferStatus.pending
+    ):
+        o.status = OfferStatus.rejected
+    plot = db.get(Plot, listing.plot_id)
+    if plot.owner_id is not None and plot.status != PlotStatus.sold:
+        plot.status = PlotStatus.owned
+    db.commit()
+    db.refresh(listing)
+    return listing_to_out(listing)
+
+
+@app.post("/api/listings/{listing_id}/reset-counters", response_model=ListingOut)
+def reset_counters(
+    listing_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Owner reopens negotiation room by clearing the counter tally on pending
+    offers of this listing."""
+    listing = _owned_listing(db, listing_id, user)
+    for o in db.query(Offer).filter(
+        Offer.listing_id == listing.id, Offer.status == OfferStatus.pending
+    ):
+        o.counters_used = 0
+    db.commit()
+    db.refresh(listing)
+    return listing_to_out(listing)
+
+
+# ---------- Marketplace: offers ----------
+
+
+def _offer_parties(db: Session, offer: Offer):
+    """Return (listing, is_owner, is_buyer) for the current user context."""
+    listing = offer.listing
+    return listing, listing.owner_id, offer.buyer_id
+
+
+@app.post("/api/listings/{listing_id}/offers", response_model=OfferOut, status_code=201)
+def make_offer(
+    listing_id: int,
+    payload: OfferCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    listing = db.get(Listing, listing_id)
+    if not listing or listing.status != ListingStatus.active:
+        raise HTTPException(status_code=404, detail="Listing not open for offers")
+    if listing.owner_id == user.id:
+        raise HTTPException(status_code=400, detail="You can't offer on your own listing")
+    if listing.floor_price and payload.amount < listing.floor_price:
+        raise HTTPException(
+            status_code=400, detail="Offer is below the seller's minimum price"
+        )
+    existing = (
+        db.query(Offer)
+        .filter(
+            Offer.listing_id == listing_id,
+            Offer.buyer_id == user.id,
+            Offer.status == OfferStatus.pending,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="You already have an active offer")
+    offer = Offer(
+        listing_id=listing_id,
+        plot_id=listing.plot_id,
+        society_id=listing.society_id,
+        buyer_id=user.id,
+        amount=payload.amount,
+        message=payload.message,
+        proposed_by=Party.buyer,
+        status=OfferStatus.pending,
+    )
+    db.add(offer)
+    db.commit()
+    db.refresh(offer)
+    return offer_to_out(offer)
+
+
+@app.get("/api/me/offers", response_model=list[OfferOut])
+def my_offers(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    offers = (
+        db.query(Offer)
+        .filter(Offer.buyer_id == user.id)
+        .order_by(Offer.id.desc())
+        .all()
+    )
+    return [offer_to_out(o) for o in offers]
+
+
+@app.get("/api/listings/{listing_id}/offers", response_model=list[OfferOut])
+def listing_offers(
+    listing_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    listing = _owned_listing(db, listing_id, user)
+    offers = (
+        db.query(Offer)
+        .filter(Offer.listing_id == listing.id)
+        .order_by(Offer.id.desc())
+        .all()
+    )
+    return [offer_to_out(o) for o in offers]
+
+
+def _load_pending_offer(db: Session, offer_id: int) -> Offer:
+    offer = db.get(Offer, offer_id)
+    if not offer:
+        raise HTTPException(status_code=404, detail="Offer not found")
+    return offer
+
+
+def _responder_ok(offer: Offer, user: User) -> bool:
+    """Only the party who did NOT make the current proposal may respond."""
+    if offer.proposed_by == Party.buyer:
+        return user.id == offer.listing.owner_id
+    return user.id == offer.buyer_id
+
+
+@app.post("/api/offers/{offer_id}/counter", response_model=OfferOut)
+def counter_offer(
+    offer_id: int,
+    payload: OfferAmount,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    offer = _load_pending_offer(db, offer_id)
+    if offer.status != OfferStatus.pending:
+        raise HTTPException(status_code=409, detail="Offer is not open")
+    if not _responder_ok(offer, user):
+        raise HTTPException(status_code=403, detail="It's not your turn to respond")
+    if offer.counters_used >= offer.listing.counter_limit:
+        raise HTTPException(
+            status_code=409,
+            detail="Counter-offer limit reached; accept or reject (owner can reset)",
+        )
+    actor = Party.owner if user.id == offer.listing.owner_id else Party.buyer
+    if actor == Party.buyer and offer.listing.floor_price and payload.amount < offer.listing.floor_price:
+        raise HTTPException(
+            status_code=400, detail="Offer is below the seller's minimum price"
+        )
+    offer.amount = payload.amount
+    offer.message = payload.message
+    offer.proposed_by = actor
+    offer.counters_used += 1
+    db.commit()
+    db.refresh(offer)
+    return offer_to_out(offer)
+
+
+@app.post("/api/offers/{offer_id}/accept", response_model=OfferOut)
+def accept_offer(
+    offer_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    offer = _load_pending_offer(db, offer_id)
+    if offer.status != OfferStatus.pending:
+        raise HTTPException(status_code=409, detail="Offer is not open")
+    if not _responder_ok(offer, user):
+        raise HTTPException(status_code=403, detail="It's not your turn to respond")
+    listing = offer.listing
+    offer.status = OfferStatus.accepted
+    listing.status = ListingStatus.agreed
+    plot = db.get(Plot, offer.plot_id)
+    plot.status = PlotStatus.under_offer
+    # Auto-reject competing pending offers.
+    for o in db.query(Offer).filter(
+        Offer.listing_id == listing.id,
+        Offer.id != offer.id,
+        Offer.status == OfferStatus.pending,
+    ):
+        o.status = OfferStatus.rejected
+    db.add(
+        Agreement(
+            offer_id=offer.id,
+            listing_id=listing.id,
+            plot_id=offer.plot_id,
+            society_id=offer.society_id,
+            buyer_id=offer.buyer_id,
+            owner_id=listing.owner_id,
+            amount=offer.amount,
+            status=AgreementStatus.pending,
+        )
+    )
+    db.commit()
+    db.refresh(offer)
+    return offer_to_out(offer)
+
+
+@app.post("/api/offers/{offer_id}/reject", response_model=OfferOut)
+def reject_offer(
+    offer_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    offer = _load_pending_offer(db, offer_id)
+    if offer.status != OfferStatus.pending:
+        raise HTTPException(status_code=409, detail="Offer is not open")
+    if user.id not in (offer.buyer_id, offer.listing.owner_id):
+        raise HTTPException(status_code=403, detail="Not part of this negotiation")
+    offer.status = OfferStatus.rejected
+    db.commit()
+    db.refresh(offer)
+    return offer_to_out(offer)
+
+
+@app.post("/api/offers/{offer_id}/withdraw", response_model=OfferOut)
+def withdraw_offer(
+    offer_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    offer = _load_pending_offer(db, offer_id)
+    if offer.buyer_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your offer")
+    if offer.status != OfferStatus.pending:
+        raise HTTPException(status_code=409, detail="Offer is not open")
+    offer.status = OfferStatus.withdrawn
+    db.commit()
+    db.refresh(offer)
+    return offer_to_out(offer)
+
+
+# ---------- Marketplace: agreements & contact reveal ----------
+
+
+@app.get("/api/me/agreements", response_model=list[AgreementOut])
+def my_agreements(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = (
+        db.query(Agreement)
+        .filter((Agreement.buyer_id == user.id) | (Agreement.owner_id == user.id))
+        .order_by(Agreement.id.desc())
+        .all()
+    )
+    return [agreement_to_out(a) for a in rows]
+
+
+@app.get("/api/societies/{society_id}/agreements", response_model=list[AgreementOut])
+def list_society_agreements(
+    society_id: int,
+    status: AgreementStatus | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not is_society_admin(db, user, society_id):
+        raise HTTPException(status_code=403, detail="Requires society admin")
+    q = db.query(Agreement).filter(Agreement.society_id == society_id)
+    if status is not None:
+        q = q.filter(Agreement.status == status)
+    return [agreement_to_out(a) for a in q.order_by(Agreement.id.desc()).all()]
+
+
+@app.post("/api/agreements/{agreement_id}/review", response_model=AgreementOut)
+def review_agreement(
+    agreement_id: int,
+    payload: AgreementReview,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Admin approves the deal (transfers ownership, reveals contacts) or rejects
+    it (the listing returns to active)."""
+    a = db.get(Agreement, agreement_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    if not is_society_admin(db, user, a.society_id):
+        raise HTTPException(status_code=403, detail="Requires society admin")
+    if a.status != AgreementStatus.pending:
+        raise HTTPException(status_code=409, detail="Agreement already reviewed")
+
+    decision = payload.decision.lower()
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision must be approve or reject")
+
+    a.admin_id = user.id
+    a.reviewed_at = func.now()
+    a.review_note = payload.note
+    listing = db.get(Listing, a.listing_id)
+    plot = db.get(Plot, a.plot_id)
+    offer = db.get(Offer, a.offer_id)
+
+    if decision == "approve":
+        a.status = AgreementStatus.approved
+        listing.status = ListingStatus.sold
+        plot.status = PlotStatus.sold
+        plot.owner_id = a.buyer_id  # ownership transfers to the buyer
+    else:
+        a.status = AgreementStatus.rejected
+        listing.status = ListingStatus.active
+        plot.status = PlotStatus.listed
+        if offer:
+            offer.status = OfferStatus.rejected
+
+    db.commit()
+    db.refresh(a)
+    return agreement_to_out(a)
+
+
+@app.get("/api/agreements/{agreement_id}/contact", response_model=ContactReveal)
+def reveal_contact(
+    agreement_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Both parties see each other's contact details once an admin approves."""
+    a = db.get(Agreement, agreement_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+    if user.id not in (a.buyer_id, a.owner_id):
+        raise HTTPException(status_code=403, detail="Not part of this agreement")
+    if a.status != AgreementStatus.approved:
+        raise HTTPException(
+            status_code=403, detail="Contact is revealed after admin approval"
+        )
+    owner = db.get(User, a.owner_id)
+    buyer = db.get(User, a.buyer_id)
+    return ContactReveal(
+        owner=ContactCard(
+            role="owner", full_name=owner.full_name, email=owner.email, phone=owner.phone
+        ),
+        buyer=ContactCard(
+            role="buyer", full_name=buyer.full_name, email=buyer.email, phone=buyer.phone
+        ),
+        amount=a.amount,
+    )

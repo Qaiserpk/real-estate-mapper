@@ -2,7 +2,16 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from .models import ClaimStatus, PlotStatus, PlotType, Role
+from .models import (
+    AgreementStatus,
+    ClaimStatus,
+    ListingStatus,
+    OfferStatus,
+    Party,
+    PlotStatus,
+    PlotType,
+    Role,
+)
 
 
 class SocietyCreate(BaseModel):
@@ -256,6 +265,117 @@ class ClaimOut(BaseModel):
 class ClaimReview(BaseModel):
     decision: str  # "approve" | "reject"
     note: str | None = None
+
+
+# ---------- Marketplace: listings, offers, agreements ----------
+
+
+class ListingCreate(BaseModel):
+    asking_price: float = Field(gt=0)
+    floor_price: float | None = Field(default=None, gt=0)
+    description: str | None = None
+
+
+class ListingUpdate(BaseModel):
+    asking_price: float | None = Field(default=None, gt=0)
+    floor_price: float | None = Field(default=None, gt=0)
+    description: str | None = None
+
+
+class ListingOut(BaseModel):
+    """Owner/negotiation view — includes the private floor price."""
+
+    id: int
+    plot_id: int
+    society_id: int
+    asking_price: float
+    floor_price: float | None
+    description: str | None
+    status: ListingStatus
+    counter_limit: int
+    created_at: datetime | None
+    plot: ClaimPlotRef
+
+    class Config:
+        from_attributes = True
+
+
+class ListingPublicOut(BaseModel):
+    """Public view — no floor price."""
+
+    id: int
+    plot_id: int
+    asking_price: float
+    description: str | None
+    status: ListingStatus
+
+    class Config:
+        from_attributes = True
+
+
+class OfferParty(BaseModel):
+    id: int
+    full_name: str | None
+
+    class Config:
+        from_attributes = True
+
+
+class OfferCreate(BaseModel):
+    amount: float = Field(gt=0)
+    message: str | None = None
+
+
+class OfferAmount(BaseModel):
+    amount: float = Field(gt=0)
+    message: str | None = None
+
+
+class OfferOut(BaseModel):
+    id: int
+    listing_id: int
+    plot: ClaimPlotRef
+    asking_price: float
+    amount: float
+    message: str | None
+    proposed_by: Party
+    status: OfferStatus
+    counters_used: int
+    counter_limit: int
+    buyer: OfferParty
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+class AgreementReview(BaseModel):
+    decision: str  # "approve" | "reject"
+    note: str | None = None
+
+
+class AgreementOut(BaseModel):
+    id: int
+    plot: ClaimPlotRef
+    society_id: int
+    amount: float
+    status: AgreementStatus
+    review_note: str | None
+    created_at: datetime | None
+    reviewed_at: datetime | None
+    buyer: OfferParty
+    owner: OfferParty
+
+
+class ContactCard(BaseModel):
+    role: str  # "owner" | "buyer"
+    full_name: str | None
+    email: EmailStr
+    phone: str | None
+
+
+class ContactReveal(BaseModel):
+    owner: ContactCard
+    buyer: ContactCard
+    amount: float
 
 
 class PlotProperties(BaseModel):

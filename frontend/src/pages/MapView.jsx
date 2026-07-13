@@ -5,9 +5,12 @@ import BaseLayer, { HAS_VECTOR } from "../BaseLayer.jsx";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import ClaimModal from "../components/ClaimModal.jsx";
+import ListingModal from "../components/ListingModal.jsx";
+import OfferModal from "../components/OfferModal.jsx";
 import {
   colorFor,
   areaBreakdown,
+  formatPKR,
   formatSize,
   STATUS_COLORS,
   STATUS_LABELS,
@@ -31,6 +34,10 @@ export default function MapView() {
   const [baseVariant, setBaseVariant] = useState("streets");
   const [myClaims, setMyClaims] = useState([]);
   const [claiming, setClaiming] = useState(null); // plot being claimed
+  const [myPlotIds, setMyPlotIds] = useState(() => new Set());
+  const [listing, setListing] = useState(null); // active listing for selected plot
+  const [listingFor, setListingFor] = useState(null); // {plot, listing?} modal
+  const [offerFor, setOfferFor] = useState(null); // {plot, listing} modal
 
   const refreshPlots = (sid) =>
     fetch(`/api/societies/${sid}/plots`)
@@ -53,6 +60,27 @@ export default function MapView() {
     api.myClaims().then(setMyClaims).catch(() => setMyClaims([]));
   };
   useEffect(loadMyClaims, [user]);
+
+  const loadMyPlots = () => {
+    if (!user) return setMyPlotIds(new Set());
+    api
+      .myPlots()
+      .then((ps) => setMyPlotIds(new Set(ps.map((p) => p.id))))
+      .catch(() => setMyPlotIds(new Set()));
+  };
+  useEffect(loadMyPlots, [user]);
+
+  // Fetch the active listing for whichever plot is selected.
+  const loadListing = (plotId) => {
+    if (!plotId) return setListing(null);
+    api
+      .getPlotListing(plotId)
+      .then(setListing)
+      .catch(() => setListing(null));
+  };
+  useEffect(() => {
+    loadListing(selected?.id);
+  }, [selected?.id]);
 
   // plot_id -> my most recent claim on it
   const claimByPlot = useMemo(() => {
@@ -120,6 +148,9 @@ export default function MapView() {
             <Link to="/claims" className="admin-link">
               My claims
             </Link>
+            <Link to="/deals" className="admin-link">
+              My deals
+            </Link>
             {(user.is_superadmin ||
               (user.memberships || []).some((m) => m.role === "admin")) && (
               <Link to="/admin" className="admin-link">
@@ -167,6 +198,10 @@ export default function MapView() {
           user={user}
           myClaim={selected ? claimByPlot.get(selected.id) : null}
           onClaim={() => setClaiming(selected)}
+          isMine={selected ? myPlotIds.has(selected.id) : false}
+          listing={listing}
+          onList={() => setListingFor({ plot: selected, listing })}
+          onOffer={() => setOfferFor({ plot: selected, listing })}
         />
       </div>
 
@@ -181,11 +216,45 @@ export default function MapView() {
           }}
         />
       )}
+
+      {listingFor && (
+        <ListingModal
+          plot={listingFor.plot}
+          listing={listingFor.listing}
+          onClose={() => setListingFor(null)}
+          onDone={() => {
+            setListingFor(null);
+            if (society) refreshPlots(society.id);
+            loadListing(selected?.id);
+            loadMyPlots();
+          }}
+        />
+      )}
+
+      {offerFor && (
+        <OfferModal
+          plot={offerFor.plot}
+          listing={offerFor.listing}
+          onClose={() => setOfferFor(null)}
+          onDone={() => setOfferFor(null)}
+        />
+      )}
     </div>
   );
 }
 
-function SidePanel({ society, selected, error, user, myClaim, onClaim }) {
+function SidePanel({
+  society,
+  selected,
+  error,
+  user,
+  myClaim,
+  onClaim,
+  isMine,
+  listing,
+  onList,
+  onOffer,
+}) {
   if (error) {
     return (
       <div className="panel">
@@ -253,13 +322,98 @@ function SidePanel({ society, selected, error, user, myClaim, onClaim }) {
         <Row k="Plot ID" v={selected.id} />
       </div>
 
-      <ClaimSection
-        selected={selected}
-        user={user}
-        myClaim={myClaim}
-        onClaim={onClaim}
-      />
+      {CLAIMABLE.has(selected.status) ? (
+        <ClaimSection
+          selected={selected}
+          user={user}
+          myClaim={myClaim}
+          onClaim={onClaim}
+        />
+      ) : (
+        <MarketSection
+          selected={selected}
+          user={user}
+          isMine={isMine}
+          listing={listing}
+          onList={onList}
+          onOffer={onOffer}
+        />
+      )}
     </div>
+  );
+}
+
+function MarketSection({ selected, user, isMine, listing, onList, onOffer }) {
+  const status = selected.status;
+  const active = listing && listing.status === "active";
+
+  if (isMine) {
+    if (active) {
+      return (
+        <div className="claim-box owned">
+          <strong>Your plot — listed</strong>
+          <div className="price-line">{formatPKR(listing.asking_price)}</div>
+          <Link to="/deals" className="btn-primary">
+            Manage listing &amp; offers
+          </Link>
+        </div>
+      );
+    }
+    if (listing && listing.status === "agreed") {
+      return (
+        <div className="claim-box pending">
+          <strong>Your plot — offer accepted</strong>
+          <p className="muted small">
+            Awaiting admin approval — see <Link to="/deals">My deals</Link>.
+          </p>
+        </div>
+      );
+    }
+    if (status === "sold")
+      return (
+        <div className="claim-box owned">
+          <strong>Sold ✓</strong>
+        </div>
+      );
+    return (
+      <div className="claim-box owned">
+        <strong>You own this plot ✓</strong>
+        <button className="btn-primary" onClick={onList}>
+          List for sale
+        </button>
+      </div>
+    );
+  }
+
+  if (active) {
+    return (
+      <div className="claim-box">
+        <div className="price-line">{formatPKR(listing.asking_price)}</div>
+        {listing.description && (
+          <p className="muted small">{listing.description}</p>
+        )}
+        {user ? (
+          <button className="btn-primary" onClick={onOffer}>
+            Make an offer
+          </button>
+        ) : (
+          <Link to="/login" className="btn-primary">
+            Sign in to make an offer
+          </Link>
+        )}
+      </div>
+    );
+  }
+  if (status === "sold")
+    return (
+      <p className="muted" style={{ marginTop: 16 }}>
+        This plot has been sold.
+      </p>
+    );
+  return (
+    <p className="muted" style={{ marginTop: 16 }}>
+      This plot is {STATUS_LABELS[status] ?? status} and isn’t listed for sale.
+    </p>
   );
 }
 

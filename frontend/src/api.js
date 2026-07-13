@@ -136,6 +136,40 @@ export const api = {
     return URL.createObjectURL(await res.blob());
   },
 
+  // ---- marketplace: listings ----
+  getPlotListing: (plotId) => req(`/api/plots/${plotId}/listing`),
+  createListing: (plotId, body) =>
+    req(`/api/plots/${plotId}/listing`, { method: "POST", ...jsonBody(body) }),
+  updateListing: (listingId, body) =>
+    req(`/api/listings/${listingId}`, { method: "PATCH", ...jsonBody(body) }),
+  withdrawListing: (listingId) =>
+    req(`/api/listings/${listingId}/withdraw`, { method: "POST" }),
+  resetCounters: (listingId) =>
+    req(`/api/listings/${listingId}/reset-counters`, { method: "POST" }),
+  myPlots: () => req("/api/me/plots"),
+  myListings: () => req("/api/me/listings"),
+  listingOffers: (listingId) => req(`/api/listings/${listingId}/offers`),
+
+  // ---- marketplace: offers ----
+  makeOffer: (listingId, body) =>
+    req(`/api/listings/${listingId}/offers`, { method: "POST", ...jsonBody(body) }),
+  myOffers: () => req("/api/me/offers"),
+  counterOffer: (offerId, body) =>
+    req(`/api/offers/${offerId}/counter`, { method: "POST", ...jsonBody(body) }),
+  acceptOffer: (offerId) => req(`/api/offers/${offerId}/accept`, { method: "POST" }),
+  rejectOffer: (offerId) => req(`/api/offers/${offerId}/reject`, { method: "POST" }),
+  withdrawOffer: (offerId) => req(`/api/offers/${offerId}/withdraw`, { method: "POST" }),
+
+  // ---- marketplace: agreements ----
+  myAgreements: () => req("/api/me/agreements"),
+  listSocietyAgreements: (societyId, status) =>
+    req(
+      `/api/societies/${societyId}/agreements${status ? `?status=${status}` : ""}`
+    ),
+  reviewAgreement: (agreementId, body) =>
+    req(`/api/agreements/${agreementId}/review`, { method: "POST", ...jsonBody(body) }),
+  revealContact: (agreementId) => req(`/api/agreements/${agreementId}/contact`),
+
   deletePlot: (plotId) => req(`/api/plots/${plotId}`, { method: "DELETE" }),
   deletePlotGroup: (groupId) => req(`/api/plots/group/${groupId}`, { method: "DELETE" }),
   resetPlots: (mapId) => req(`/api/maps/${mapId}/plots`, { method: "DELETE" }),
