@@ -95,6 +95,94 @@ export function quadVertexGrid(corners, rows, cols) {
   return verts;
 }
 
+// ---- Curved block edges (arcs) via a bilinearly-blended Coons patch ----
+// A block can have any of its 4 edges bulged into a circular arc. edgeThrough is
+// [t0,t1,t2,t3] (perimeter edges A-B, B-C, C-D, D-A); each entry is a [lng,lat]
+// through-point the arc passes through, or null for a straight edge. With all
+// edges straight the Coons patch is identical to plain bilinear interpolation.
+
+function projLocal(corners) {
+  const lat0 = corners.reduce((s, c) => s + c[1], 0) / corners.length;
+  const lng0 = corners.reduce((s, c) => s + c[0], 0) / corners.length;
+  const mLat = 110540;
+  const mLng = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  return {
+    to: ([lng, lat]) => [(lng - lng0) * mLng, (lat - lat0) * mLat],
+    from: ([x, y]) => [lng0 + x / mLng, lat0 + y / mLat],
+  };
+}
+function circle3(a, b, c) {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-6) return null;
+  const ua = a[0] ** 2 + a[1] ** 2;
+  const ub = b[0] ** 2 + b[1] ** 2;
+  const uc = c[0] ** 2 + c[1] ** 2;
+  const cx = (ua * (b[1] - c[1]) + ub * (c[1] - a[1]) + uc * (a[1] - b[1])) / d;
+  const cy = (ua * (c[0] - b[0]) + ub * (a[0] - c[0]) + uc * (b[0] - a[0])) / d;
+  return [cx, cy, Math.hypot(a[0] - cx, a[1] - cy)];
+}
+// Edge evaluator in metres: t in [0,1] from P0 to P1, along the arc through Tm.
+function arcEvaluator(P0, P1, Tm) {
+  const line = (t) => [P0[0] + (P1[0] - P0[0]) * t, P0[1] + (P1[1] - P0[1]) * t];
+  if (!Tm) return line;
+  const circ = circle3(P0, P1, Tm);
+  if (!circ) return line;
+  const [cx, cy, r] = circ;
+  const norm = (x) => ((x % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const ang = (p) => Math.atan2(p[1] - cy, p[0] - cx);
+  const a1 = ang(P0);
+  const spanCCW = norm(ang(P1) - a1);
+  const ccw = norm(ang(Tm) - a1) <= spanCCW;
+  const span = ccw ? spanCCW : spanCCW - 2 * Math.PI;
+  return (t) => {
+    const a = a1 + span * t;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+}
+
+// (rows+1) x (cols+1) vertex grid honouring curved edges (Coons patch).
+export function coonsVertexGrid(corners, edgeThrough, rows, cols) {
+  const [A, B, C, D] = corners;
+  const proj = projLocal(corners);
+  const a = proj.to(A), b = proj.to(B), c = proj.to(C), d = proj.to(D);
+  const ET = edgeThrough || [null, null, null, null];
+  const tp = (i) => (ET[i] ? proj.to(ET[i]) : null);
+  const top = arcEvaluator(a, b, tp(0)); // A->B (v=0)
+  const right = arcEvaluator(b, c, tp(1)); // B->C (u=1)
+  const bottom = arcEvaluator(d, c, tp(2)); // D->C (v=1)
+  const left = arcEvaluator(a, d, tp(3)); // A->D (u=0)
+  const verts = [];
+  for (let i = 0; i <= rows; i++) {
+    const v = i / rows;
+    const row = [];
+    for (let j = 0; j <= cols; j++) {
+      const u = j / cols;
+      const T = top(u), Bt = bottom(u), Lf = left(v), Rt = right(v);
+      const bx = (1 - u) * (1 - v) * a[0] + u * (1 - v) * b[0] + (1 - u) * v * d[0] + u * v * c[0];
+      const by = (1 - u) * (1 - v) * a[1] + u * (1 - v) * b[1] + (1 - u) * v * d[1] + u * v * c[1];
+      const x = (1 - v) * T[0] + v * Bt[0] + (1 - u) * Lf[0] + u * Rt[0] - bx;
+      const y = (1 - v) * T[1] + v * Bt[1] + (1 - u) * Lf[1] + u * Rt[1] - by;
+      row.push(proj.from([x, y]));
+    }
+    verts.push(row);
+  }
+  return verts;
+}
+
+// Densified boundary ring [lng,lat] of a (possibly curved) block, for display.
+export function blockOutline(corners, edgeThrough, perEdge = 20) {
+  const [A, B, C, D] = corners;
+  const proj = projLocal(corners);
+  const ET = edgeThrough || [null, null, null, null];
+  const edges = [[A, B, 0], [B, C, 1], [C, D, 2], [D, A, 3]];
+  const ring = [];
+  for (const [P, Q, k] of edges) {
+    const ev = arcEvaluator(proj.to(P), proj.to(Q), ET[k] ? proj.to(ET[k]) : null);
+    for (let s = 0; s < perEdge; s++) ring.push(proj.from(ev(s / perEdge)));
+  }
+  return ring;
+}
+
 // Cells (plots) from a vertex grid; each cell is the quad of its 4 grid corners.
 // Returns [{ row, col, geometry }].
 export function cellsFromGrid(verts) {

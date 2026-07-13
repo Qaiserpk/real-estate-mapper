@@ -1103,6 +1103,13 @@ body,
   font-weight: 700;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
 }
+/* Bulge (arc) handle — diamond, distinct from the square resize handle. */
+.qe-bulge {
+  background: #0d9488;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transform: rotate(45deg);
+}
 
 /* LOD plot-number labels (marker-based, culled to viewport) */
 .plot-label span {

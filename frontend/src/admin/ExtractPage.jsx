@@ -11,9 +11,8 @@ import QuadEditor from "./QuadEditor.jsx";
 import { formatSize } from "../status.js";
 import {
   pixelToLatLng,
-  subdivideQuad,
   normalizeQuad,
-  quadVertexGrid,
+  coonsVertexGrid,
   cellsFromGrid,
 } from "../geo.js";
 
@@ -441,6 +440,7 @@ export default function ExtractPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [pending, setPending] = useState(null); // GeoJSON geometry awaiting save
   const [corners, setCorners] = useState(null); // [lng,lat] x4 if quad, else null
+  const [edgeThrough, setEdgeThrough] = useState([null, null, null, null]); // per-edge arc apex
   const [mode, setMode] = useState("single"); // 'single' | 'subdivide'
   const [sub, setSub] = useState({
     rows: "2",
@@ -517,6 +517,7 @@ export default function ExtractPage() {
       layer.remove();
       pendingLayer.current = null;
       setCorners(norm);
+      setEdgeThrough([null, null, null, null]);
       setPending(ringToGeometry(norm));
       setMode("subdivide");
     } else {
@@ -536,9 +537,10 @@ export default function ExtractPage() {
     }
   };
 
-  const setQuad = (next) => {
-    setCorners(next);
-    setPending(ringToGeometry(next));
+  const setBlock = (nextCorners, nextThrough) => {
+    setCorners(nextCorners);
+    setEdgeThrough(nextThrough);
+    setPending(ringToGeometry(nextCorners));
   };
 
   const clearPending = () => {
@@ -548,6 +550,7 @@ export default function ExtractPage() {
     }
     setPending(null);
     setCorners(null);
+    setEdgeThrough([null, null, null, null]);
     setForm(EMPTY_FORM);
   };
 
@@ -560,8 +563,9 @@ export default function ExtractPage() {
     const rows = Math.max(1, Math.floor(Number(sub.rows) || 1));
     const cols = Math.max(1, Math.floor(Number(sub.cols) || 1));
     if (rows * cols > 3000) return { rows, cols, cells: [], tooMany: true };
-    return { rows, cols, cells: subdivideQuad(corners, rows, cols) };
-  }, [corners, sub]);
+    const verts = coonsVertexGrid(corners, edgeThrough, rows, cols);
+    return { rows, cols, verts, cells: cellsFromGrid(verts) };
+  }, [corners, edgeThrough, sub]);
 
   // Plot number = start + (col step) * colInc + (row step) * rowInc, from the
   // chosen start corner. Blank rowInc auto-continues consecutively (cols*colInc).
@@ -671,7 +675,7 @@ export default function ExtractPage() {
       }));
       const res = await api.createPlotsBatch(mapId, plots, {
         id: groupId,
-        verts: quadVertexGrid(corners, grid.rows, grid.cols),
+        verts: grid.verts,
         rows: grid.rows,
         cols: grid.cols,
       });
@@ -1057,7 +1061,13 @@ export default function ExtractPage() {
             {shapeEdit && (
               <ShapeEditor geometry={shapeEdit.geometry} layerRef={shapeLayerRef} />
             )}
-            {pending && corners && <QuadEditor corners={corners} onChange={setQuad} />}
+            {pending && corners && (
+              <QuadEditor
+                corners={corners}
+                edgeThrough={edgeThrough}
+                onChange={setBlock}
+              />
+            )}
             {blockEdit && blockVerts && (
               <>
                 {blockPreviewFC && (
@@ -1376,8 +1386,10 @@ export default function ExtractPage() {
             <div className="card idle-card">
               <p className="muted small">
                 <strong>Rectangle</strong> tool → a block you subdivide into plots.{" "}
-                <strong>Polygon</strong> tool → a single plot. Reshape with the handles, angle
-                with <strong>⟳</strong>. Drafts stay hidden until you confirm.
+                <strong>Polygon</strong> tool → a single plot. Drag corners/edges to
+                reshape, the <strong>◆</strong> to curve an edge into an arc (double-click
+                it to straighten), <strong>⟳</strong> to rotate. Drafts stay hidden until
+                you confirm.
               </p>
             </div>
           )}
