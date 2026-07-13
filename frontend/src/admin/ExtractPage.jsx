@@ -598,8 +598,15 @@ export default function ExtractPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, grid, sub]);
 
-  // Signature so the preview layer re-renders (labels update) on any numbering change.
+  // Signature so the preview layer re-renders on any change that alters the cells
+  // or their labels — numbering, split style, block corners, and edge curves.
+  // (react-leaflet GeoJSON only re-renders when its key changes.)
   const numSig = `${sub.startNo}-${sub.colInc}-${sub.rowInc}-${sub.revH}-${sub.revV}`;
+  const geomSig = useMemo(() => {
+    const cs = corners ? corners.map((c) => c.map((n) => n.toFixed(6)).join()).join("|") : "";
+    const es = edgeThrough.map((t) => (t ? t.map((n) => n.toFixed(6)).join() : "·")).join("|");
+    return `${sub.split}~${cs}~${es}`;
+  }, [corners, edgeThrough, sub.split]);
 
   // Snap targets while mesh-editing: every vertex of plots NOT in this block.
   const snapTargets = useMemo(() => {
@@ -1089,7 +1096,7 @@ export default function ExtractPage() {
             )}
             {previewFC && (
               <GeoJSON
-                key={`preview-${grid.rows}x${grid.cols}-${numSig}`}
+                key={`preview-${grid.rows}x${grid.cols}-${numSig}-${geomSig}`}
                 data={previewFC}
                 interactive={false}
                 style={{ color: "#7c3aed", weight: 1, fillColor: "#a855f7", fillOpacity: 0.25 }}
