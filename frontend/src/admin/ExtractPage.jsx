@@ -35,9 +35,37 @@ const vertexIcon = L.divIcon({
   iconSize: [12, 12],
   iconAnchor: [6, 6],
 });
+const moveIcon = L.divIcon({
+  className: "mesh-move",
+  html: "✥",
+  iconSize: [30, 30],
+  iconAnchor: [15, 15],
+});
 function MeshEditor({ verts, onChange, snapTargets }) {
   const map = useMap();
   const SNAP_PX = 12;
+  const moveRef = useRef(null);
+
+  // Whole-block move: drag the centre handle to translate every vertex together.
+  const center = () => {
+    let x = 0, y = 0, n = 0;
+    for (const row of verts) for (const v of row) { x += v[0]; y += v[1]; n++; }
+    return [y / n, x / n]; // [lat, lng]
+  };
+  const onMoveStart = (e) => {
+    const ll = e.target.getLatLng();
+    moveRef.current = { lng: ll.lng, lat: ll.lat, snap: verts.map((row) => row.map((v) => v.slice())) };
+  };
+  const onMove = (e) => {
+    if (!moveRef.current) return;
+    const ll = e.target.getLatLng();
+    const dLng = ll.lng - moveRef.current.lng;
+    const dLat = ll.lat - moveRef.current.lat;
+    onChange(moveRef.current.snap.map((row) => row.map(([lng, lat]) => [lng + dLng, lat + dLat])));
+  };
+  const onMoveEnd = () => {
+    moveRef.current = null;
+  };
 
   // Snap a dragged vertex onto a nearby neighbor-block vertex (within SNAP_PX).
   const snap = (latlng) => {
@@ -80,7 +108,17 @@ function MeshEditor({ verts, onChange, snapTargets }) {
       );
     }
   }
-  return <>{markers}</>;
+  return (
+    <>
+      {markers}
+      <Marker
+        position={center()}
+        icon={moveIcon}
+        draggable
+        eventHandlers={{ dragstart: onMoveStart, drag: onMove, dragend: onMoveEnd }}
+      />
+    </>
+  );
 }
 
 // Clicking empty map background clears the current selection.
@@ -1253,9 +1291,10 @@ export default function ExtractPage() {
                 </button>
               </div>
               <p className="muted small">
-                Drag any vertex dot to reshape. Interior vertices move adjacent plots
-                together; edge vertices <strong>snap</strong> onto nearby neighboring-block
-                vertices. {blockEdit.rows * blockEdit.cols} plots keep their numbers.
+                Drag any vertex dot to reshape. Drag the <strong>✥</strong> in the middle
+                to move the whole block. Interior vertices move adjacent plots together;
+                edge vertices <strong>snap</strong> onto nearby neighboring-block vertices.{" "}
+                {blockEdit.rows * blockEdit.cols} plots keep their numbers.
               </p>
               <div className="two">
                 <button onClick={saveBlockEdit}>Save layout</button>

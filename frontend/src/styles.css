@@ -1086,6 +1086,21 @@ body,
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   cursor: grab;
 }
+.mesh-move {
+  background: #7c3aed;
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  text-align: center;
+  line-height: 26px;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  cursor: move;
+}
+.mesh-move:active {
+  cursor: grabbing;
+}
 .qe-edge {
   background: #7c3aed;
   border: 2px solid #fff;
