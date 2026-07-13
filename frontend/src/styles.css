@@ -1875,25 +1875,6 @@ textarea::placeholder {
   opacity: 1;
 }
 
-/* ---------- Shape editor handles (arc/bulge) ---------- */
-.arc-h {
-  box-sizing: border-box;
-  border-radius: 50%;
-  cursor: grab;
-}
-.arc-h:active {
-  cursor: grabbing;
-}
-.arc-corner {
-  background: #fff;
-  border: 2px solid #ea580c;
-}
-.arc-edge {
-  background: #f97316;
-  border: 2px solid #fff;
-  box-shadow: 0 0 0 1px #ea580c;
-}
-
 .split-style {
   display: flex;
   align-items: center;
